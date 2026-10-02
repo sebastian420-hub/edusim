@@ -1,0 +1,26 @@
+name: CI
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Software Vulkan renderer (for shader validation and GPU tests)
+        run: npx vgpu install-software-renderer
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+        env:
+          REQUIRE_GPU: "1"
+      - run: pnpm check:wgsl
+      - run: pnpm build

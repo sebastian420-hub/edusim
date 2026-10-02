@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import { useId } from "react";
 
 export interface ParameterSliderProps {
   label: string;
@@ -9,8 +9,25 @@ export interface ParameterSliderProps {
   max?: number;
   step?: number;
   unit?: string;
+  /** Digits shown after the decimal point; defaults to the precision implied by `step`. */
+  decimals?: number;
   color?: "blue" | "green" | "purple" | "rose" | "red" | "amber" | "slate";
   className?: string;
+}
+
+const ACCENTS: Record<NonNullable<ParameterSliderProps["color"]>, string> = {
+  blue: "accent-blue-500",
+  green: "accent-green-500",
+  purple: "accent-purple-500",
+  rose: "accent-rose-500",
+  red: "accent-red-500",
+  amber: "accent-amber-500",
+  slate: "accent-slate-500",
+};
+
+function decimalsOf(step: number): number {
+  const s = String(step);
+  return s.includes(".") ? s.split(".")[1].length : 0;
 }
 
 export function ParameterSlider({
@@ -21,43 +38,35 @@ export function ParameterSlider({
   max = 100,
   step = 1,
   unit = "",
+  decimals,
   color = "blue",
-  className = ""
+  className = "",
 }: ParameterSliderProps) {
-  const colorClasses: Record<string, string> = {
-    blue: "accent-blue-500",
-    green: "accent-green-500",
-    purple: "accent-purple-500",
-    rose: "accent-rose-500",
-    red: "accent-red-500",
-    amber: "accent-amber-500",
-    slate: "accent-slate-500",
-  };
-
-  const trackColor = colorClasses[color] || colorClasses.blue;
+  const id = useId();
+  const digits = decimals ?? decimalsOf(step);
 
   return (
-    <div className={`flex flex-col gap-1 w-full ${className}`}>
-      <div className="flex justify-between items-center text-sm">
-        <label className="font-medium text-slate-200" htmlFor={`slider-${label}`}>
+    <div className={`flex w-full flex-col gap-1 ${className}`}>
+      <div className="flex items-center justify-between text-sm">
+        <label className="font-medium text-slate-200" htmlFor={id}>
           {label}
         </label>
-        <span className="text-slate-400 font-mono text-xs">
-          {value}{unit}
+        <span className="font-mono text-xs text-slate-400">
+          {value.toFixed(digits)}
+          {unit}
         </span>
       </div>
       <input
-        id={`slider-${label}`}
+        id={id}
         type="range"
         min={min}
         max={max}
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className={`w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer ${trackColor}`}
-        aria-label={`${label} parameter`}
+        className={`h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-slate-700 ${ACCENTS[color]}`}
       />
-      <div className="flex justify-between text-[10px] text-slate-500 px-0.5">
+      <div className="flex justify-between px-0.5 text-[10px] text-slate-500">
         <span>{min}</span>
         <span>{max}</span>
       </div>

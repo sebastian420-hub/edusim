@@ -12,11 +12,11 @@ export interface SimMeta {
   implemented: boolean;
 }
 
-export const SUBJECTS: Record<Subject, { label: string; icon: string; color: string }> = {
-  physics: { label: "Physics", icon: "⚛️", color: "blue" },
-  chemistry: { label: "Chemistry", icon: "🧪", color: "green" },
-  cs: { label: "Computer Science", icon: "💻", color: "purple" },
-  biology: { label: "Biology", icon: "🧬", color: "rose" },
+export const SUBJECTS: Record<Subject, { label: string; icon: string }> = {
+  physics: { label: "Physics", icon: "⚛️" },
+  chemistry: { label: "Chemistry", icon: "🧪" },
+  cs: { label: "Computer Science", icon: "💻" },
+  biology: { label: "Biology", icon: "🧬" },
 };
 
 export const SIMULATIONS: SimMeta[] = [
@@ -47,3 +47,15 @@ export const SIMULATIONS: SimMeta[] = [
   { id: "membrane-potential", title: "Resting Membrane Potential", subject: "biology", difficulty: "easy", description: "Nernst and Goldman equations with ion diffusion visualization.", icon: "⚡", path: "/biology/membrane-potential", implemented: false },
   { id: "brain-map", title: "Brain Region Map", subject: "biology", difficulty: "medium", description: "3D cortical surface with connectome dynamics.", icon: "🧠", path: "/biology/brain-map", implemented: false },
 ];
+
+export function implementedSimulations(): SimMeta[] {
+  return SIMULATIONS.filter((s) => s.implemented);
+}
+
+export function simulationsFor(subject: Subject): SimMeta[] {
+  return SIMULATIONS.filter((s) => s.subject === subject);
+}
+
+export function findSimulation(subject: string, id: string): SimMeta | undefined {
+  return SIMULATIONS.find((s) => s.subject === subject && s.id === id);
+}

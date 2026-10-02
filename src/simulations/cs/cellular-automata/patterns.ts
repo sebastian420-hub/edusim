@@ -78,3 +78,19 @@ export function getPatternBounds(pattern: Pattern): { width: number, height: num
   }
   return { width: maxX + 1, height: maxY + 1 };
 }
+
+/** Rasterises `pattern` centred on a `width` x `height` grid; cells outside the grid are dropped. */
+export function rasterizePattern(pattern: Pattern, width: number, height: number): Uint32Array<ArrayBuffer> {
+  const cells = new Uint32Array(width * height);
+  const bounds = getPatternBounds(pattern);
+  const startX = Math.floor(width / 2 - bounds.width / 2);
+  const startY = Math.floor(height / 2 - bounds.height / 2);
+  for (const [px, py] of pattern.points) {
+    const x = startX + px;
+    const y = startY + py;
+    if (x >= 0 && x < width && y >= 0 && y < height) cells[y * width + x] = 1;
+  }
+  return cells;
+}
+
+export const DEFAULT_PATTERN = "Glider Gun (Gosper)";

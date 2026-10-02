@@ -1,117 +1,127 @@
 "use client";
-import React, { ReactNode, useState } from "react";
-import { Subject, Difficulty, SUBJECTS } from "@/lib/subjects";
+import Link from "next/link";
+import { useState } from "react";
+import type { ReactNode } from "react";
+import { SUBJECTS } from "@/lib/subjects";
+import type { Difficulty, Subject } from "@/lib/subjects";
+import type { GpuStatus } from "@/lib/gpu/runtime";
+import { GpuStatusOverlay } from "./GpuStatusOverlay";
 
 interface SimLayoutProps {
   title: string;
   subject: Subject;
   difficulty: Difficulty;
-  children: ReactNode; // SimCanvas goes here
-  controls: ReactNode; // Parameter sliders go here
-  explanation: ReactNode; // Explanation text goes here
+  status: GpuStatus;
+  /** The <canvas> (and any overlays drawn on top of it). */
+  children: ReactNode;
+  controls: ReactNode;
+  explanation: ReactNode;
+  /** Start in the playing state (default true). */
+  initiallyPlaying?: boolean;
   onPlayPause?: (playing: boolean) => void;
   onReset?: () => void;
+  /** When provided a Step button is shown; stepping pauses the simulation. */
+  onStep?: () => void;
 }
+
+const DIFFICULTY_STYLES: Record<Difficulty, string> = {
+  easy: "bg-green-500/20 text-green-400 border-green-500/20",
+  medium: "bg-amber-500/20 text-amber-400 border-amber-500/20",
+  hard: "bg-red-500/20 text-red-400 border-red-500/20",
+};
 
 export function SimLayout({
   title,
   subject,
   difficulty,
+  status,
   children,
   controls,
   explanation,
+  initiallyPlaying = true,
   onPlayPause,
-  onReset
+  onReset,
+  onStep,
 }: SimLayoutProps) {
-  const [mode, setMode] = useState<"guided" | "interactive" | "sandbox">("interactive");
-  const [playing, setPlaying] = useState(true);
-
+  const [playing, setPlaying] = useState(initiallyPlaying);
   const subjectMeta = SUBJECTS[subject];
 
-  const handlePlayPause = () => {
+  const togglePlaying = () => {
     const next = !playing;
     setPlaying(next);
     onPlayPause?.(next);
   };
 
-  const difficultyColors = {
-    easy: "bg-green-500/20 text-green-400 border-green-500/20",
-    medium: "bg-amber-500/20 text-amber-400 border-amber-500/20",
-    hard: "bg-red-500/20 text-red-400 border-red-500/20"
+  const step = () => {
+    if (playing) {
+      setPlaying(false);
+      onPlayPause?.(false);
+    }
+    onStep?.();
   };
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden">
-      {/* Header */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 shrink-0 gap-4">
-        <div className="flex items-center gap-4 flex-wrap">
-          <h1 className="text-xl font-bold tracking-tight">{title}</h1>
-          <span className={`px-2.5 py-1 text-xs font-semibold rounded-full bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1.5`}>
-            <span>{subjectMeta.icon}</span> {subjectMeta.label}
-          </span>
-          <span className={`px-2 py-0.5 text-[10px] uppercase tracking-wider font-bold rounded border ${difficultyColors[difficulty]}`}>
-            {difficulty}
-          </span>
-        </div>
-        <div className="flex bg-slate-800 p-1 rounded-lg self-start md:self-auto">
-          {(["guided", "interactive", "sandbox"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md capitalize transition-colors ${mode === m ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
+    <div className="flex h-dvh flex-col overflow-hidden bg-slate-950 text-slate-100">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-800 bg-slate-900 px-4 py-3 md:px-6">
+        <Link
+          href="/"
+          className="rounded text-sm text-slate-400 outline-none transition-colors hover:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-500"
+        >
+          ← All simulations
+        </Link>
+        <h1 className="text-lg font-bold tracking-tight md:text-xl">{title}</h1>
+        <span className="flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-300">
+          <span aria-hidden>{subjectMeta.icon}</span> {subjectMeta.label}
+        </span>
+        <span
+          className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${DIFFICULTY_STYLES[difficulty]}`}
+        >
+          {difficulty}
+        </span>
       </header>
 
-      {/* Main Workspace */}
-      <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
-        {/* Left: Simulation Canvas */}
-        <main className="flex-1 relative bg-black min-h-[50vh] md:min-h-0">
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <main className="relative min-h-[45vh] flex-1 bg-black md:min-h-0">
           {children}
+          <GpuStatusOverlay status={status} />
         </main>
 
-        {/* Right: Sidebar */}
-        <aside className="w-full md:w-80 lg:w-96 bg-slate-900 border-l border-slate-800 flex flex-col overflow-hidden">
-          {/* Explanation Panel */}
-          <div className="p-6 border-b border-slate-800 flex-1 overflow-y-auto min-h-[200px]">
-            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">Explanation</h3>
-            <div className="prose prose-invert prose-sm">
-              {explanation}
-            </div>
-          </div>
+        <aside className="flex max-h-[55vh] w-full flex-col overflow-y-auto border-t border-slate-800 bg-slate-900 md:max-h-none md:w-80 md:border-l md:border-t-0 lg:w-96">
+          <section className="border-b border-slate-800 p-5">
+            <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-slate-400">Explanation</h2>
+            <div className="space-y-3 text-sm leading-relaxed text-slate-300">{explanation}</div>
+          </section>
 
-          {/* Controls Panel */}
-          <div className="p-6 bg-slate-900/50 flex-none shrink-0">
-            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Parameters</h3>
-            <div className="space-y-4">
-              {controls}
-            </div>
+          <section className="flex-1 bg-slate-900/50 p-5">
+            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-400">Parameters</h2>
+            <div className="space-y-4">{controls}</div>
 
-            {/* Transport Controls */}
-            <div className="mt-8 flex gap-3">
-              <button 
-                onClick={handlePlayPause}
-                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={togglePlaying}
+                className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 font-semibold text-white transition-colors hover:bg-blue-500"
               >
-                {playing ? (
-                  <><span className="w-3 h-3 bg-white block" style={{ clipPath: "polygon(0 0, 33% 0, 33% 100%, 0 100%, 0 0, 67% 0, 100% 0, 100% 100%, 67% 100%, 67% 0)" }}></span> Pause</>
-                ) : (
-                  <><span className="w-3 h-3 bg-white block" style={{ clipPath: "polygon(0 0, 0 100%, 100% 50%)" }}></span> Play</>
-                )}
+                {playing ? "Pause" : "Play"}
               </button>
-              <button 
+              {onStep && (
+                <button
+                  type="button"
+                  onClick={step}
+                  className="rounded-lg bg-slate-700 px-4 py-2.5 font-semibold text-white transition-colors hover:bg-slate-600"
+                >
+                  Step
+                </button>
+              )}
+              <button
+                type="button"
                 onClick={onReset}
-                className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center"
-                aria-label="Reset"
-                title="Reset"
+                className="rounded-lg bg-slate-700 px-4 py-2.5 font-semibold text-white transition-colors hover:bg-slate-600"
               >
                 Reset
               </button>
             </div>
-          </div>
+          </section>
         </aside>
       </div>
     </div>

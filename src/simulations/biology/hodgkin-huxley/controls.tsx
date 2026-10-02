@@ -1,126 +1,116 @@
 "use client";
+import { useEffect, useState } from "react";
+import { ParameterSlider } from "@/components/ParameterSlider";
+import { SimLayout } from "@/components/SimLayout";
+import { useGpuSim } from "@/lib/gpu/useGpuSim";
+import { WINDOW_MS } from "./hh";
+import { createHodgkinHuxley, DEFAULT_SIM_PARAMS } from "./sim";
+import type { HHSimParams } from "./sim";
 
-import { useEffect, useRef, useState } from "react";
-import { createSim, SimState } from "./sim";
+const PRESETS: Record<string, { label: string; params: Partial<HHSimParams> }> = {
+  normal: { label: "Normal AP", params: { g_Na: 120, g_K: 36, I_inj: 10, pulse_mode: 1 } },
+  ttx: { label: "TTX Block", params: { g_Na: 0, g_K: 36, I_inj: 20, pulse_mode: 1 } },
+  tea: { label: "TEA Block", params: { g_Na: 120, g_K: 0, I_inj: 10, pulse_mode: 1 } },
+  anode: { label: "Anode Break", params: { g_Na: 120, g_K: 36, I_inj: -20, pulse_mode: 1 } },
+};
+
+const LEGEND = [
+  { color: "bg-[#33ff66]", label: "Voltage (mV)" },
+  { color: "bg-[#ff3333]", label: "m gate" },
+  { color: "bg-[#3366ff]", label: "h gate" },
+  { color: "bg-[#ffcc33]", label: "n gate" },
+];
 
 export default function HHControls() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const simRef = useRef<Awaited<ReturnType<typeof createSim>> | null>(null);
-
-  const [state, setState] = useState<SimState>({
-    g_Na: 120.0,
-    g_K: 36.0,
-    g_L: 0.3,
-    E_Na: 50.0,
-    E_K: -77.0,
-    E_L: -54.387,
-    C_m: 1.0,
-    I_inj: 10.0,
-    temperature: 6.3,
-    pulse_mode: 0,
-  });
+  const { canvasRef, status, sim } = useGpuSim(createHodgkinHuxley);
+  const [params, setParams] = useState<HHSimParams>(DEFAULT_SIM_PARAMS);
 
   useEffect(() => {
-    if (!canvasRef.current) return;
-    
-    let sim: any = null;
-    createSim(canvasRef.current).then((s) => {
-      sim = s;
-      simRef.current = sim;
-    });
-    
-    return () => {
-      if (sim) sim.destroy();
-    };
-  }, []);
+    sim?.setParams(params);
+  }, [sim, params]);
 
-  const updateState = (update: Partial<SimState>) => {
-    const next = { ...state, ...update };
-    setState(next);
-    simRef.current?.setState(next);
+  const update = (patch: Partial<HHSimParams>) => setParams((prev) => ({ ...prev, ...patch }));
+
+  const applyPreset = (key: keyof typeof PRESETS) => {
+    update(PRESETS[key].params);
+    sim?.reset();
   };
 
-  const applyPreset = (preset: "normal" | "ttx" | "tea" | "anode") => {
-    switch (preset) {
-      case "normal":
-        updateState({ g_Na: 120, g_K: 36, I_inj: 10, pulse_mode: 1 });
-        break;
-      case "ttx":
-        updateState({ g_Na: 0, g_K: 36, I_inj: 20, pulse_mode: 1 });
-        break;
-      case "tea":
-        updateState({ g_Na: 120, g_K: 0, I_inj: 10, pulse_mode: 1 });
-        break;
-      case "anode":
-        updateState({ g_Na: 120, g_K: 36, I_inj: -20, pulse_mode: 1 });
-        break;
-    }
-    simRef.current?.reset();
-  };
+  const controls = (
+    <>
+      <ParameterSlider label="Injected current" unit=" µA/cm²" min={-20} max={50} step={0.5} color="green" value={params.I_inj} onChange={(v) => update({ I_inj: v })} />
+      <ParameterSlider label="Temperature" unit=" °C" min={0} max={40} step={0.1} color="amber" value={params.temperature} onChange={(v) => update({ temperature: v })} />
+      <ParameterSlider label="Na⁺ conductance (TTX)" unit=" mS/cm²" min={0} max={200} step={1} color="red" value={params.g_Na} onChange={(v) => update({ g_Na: v })} />
+      <ParameterSlider label="K⁺ conductance (TEA)" unit=" mS/cm²" min={0} max={80} step={1} color="blue" value={params.g_K} onChange={(v) => update({ g_K: v })} />
+      <ParameterSlider label="Playback speed" unit=" ms/s" min={5} max={200} step={5} color="slate" value={params.timeScale} onChange={(v) => update({ timeScale: v })} />
+
+      <fieldset>
+        <legend className="mb-2 text-sm font-semibold text-slate-200">Stimulus</legend>
+        <div className="flex gap-4 text-sm text-slate-300">
+          {([
+            [0, "DC"],
+            [1, "Pulse"],
+            [2, "Twin"],
+          ] as const).map(([mode, label]) => (
+            <label key={mode} className="flex items-center gap-1.5">
+              <input type="radio" name="hh-stimulus" checked={params.pulse_mode === mode} onChange={() => update({ pulse_mode: mode })} />
+              {label}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend className="mb-2 text-sm font-semibold text-slate-200">Presets</legend>
+        <div className="grid grid-cols-2 gap-2">
+          {Object.entries(PRESETS).map(([key, preset]) => (
+            <button key={key} type="button" onClick={() => applyPreset(key)} className="rounded bg-slate-800 py-1.5 text-sm text-slate-200 transition-colors hover:bg-slate-700">
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+    </>
+  );
+
+  const explanation = (
+    <>
+      <p>
+        The Hodgkin–Huxley model describes how a neuron’s membrane voltage produces an action potential.
+        Sodium channels (gates <em>m</em>, <em>h</em>) open quickly and depolarise the cell; potassium
+        channels (gate <em>n</em>) open more slowly and repolarise it.
+      </p>
+      <p>
+        <strong className="text-slate-100">Try it.</strong> Block sodium channels with the TTX preset and the
+        spike disappears; block potassium (TEA) and the cell struggles to repolarise. Warmer temperatures
+        speed up every gate.
+      </p>
+      <p className="text-slate-400">The trace shows the last {WINDOW_MS.toFixed(0)} ms of neuron time.</p>
+    </>
+  );
 
   return (
-    <div className="flex flex-col md:flex-row gap-6 p-4 w-full h-full bg-zinc-950 text-white">
-      <div className="flex-1 flex flex-col min-h-[400px] border border-zinc-800 rounded-lg overflow-hidden relative">
-        <canvas ref={canvasRef} className="w-full h-full" style={{ display: 'block', width: '100%', height: '100%' }} />
-        <div className="absolute top-4 left-4 flex gap-4 text-xs font-mono">
-          <div className="flex items-center gap-1"><div className="w-3 h-3 bg-[#33ff66] rounded-full"></div> Voltage (mV)</div>
-          <div className="flex items-center gap-1"><div className="w-3 h-3 bg-[#ff3333] rounded-full"></div> m gate</div>
-          <div className="flex items-center gap-1"><div className="w-3 h-3 bg-[#3366ff] rounded-full"></div> h gate</div>
-          <div className="flex items-center gap-1"><div className="w-3 h-3 bg-[#ffcc33] rounded-full"></div> n gate</div>
-        </div>
+    <SimLayout
+      title="Hodgkin–Huxley Neuron"
+      subject="biology"
+      difficulty="medium"
+      status={status}
+      controls={controls}
+      explanation={explanation}
+      onPlayPause={(playing) => (playing ? sim?.play() : sim?.pause())}
+      onReset={() => sim?.reset()}
+    >
+      <canvas ref={canvasRef} className="block h-full w-full" />
+      <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap gap-x-4 gap-y-1 rounded bg-black/50 px-2 py-1 font-mono text-xs text-slate-200">
+        {LEGEND.map((item) => (
+          <div key={item.label} className="flex items-center gap-1.5">
+            <span className={`h-3 w-3 rounded-full ${item.color}`} /> {item.label}
+          </div>
+        ))}
       </div>
-      
-      <div className="w-full md:w-80 flex flex-col gap-6 overflow-y-auto">
-        <div className="space-y-4">
-          <h2 className="text-xl font-bold">Hodgkin-Huxley Neuron</h2>
-          
-          <div className="flex gap-2">
-            <button onClick={() => simRef.current?.play()} className="bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded">Play</button>
-            <button onClick={() => simRef.current?.pause()} className="bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded">Pause</button>
-            <button onClick={() => simRef.current?.reset()} className="bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded">Reset</button>
-          </div>
-          
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Injected Current (I_inj): {state.I_inj.toFixed(1)} µA/cm²</label>
-            <input type="range" min="-20" max="50" step="0.5" value={state.I_inj} onChange={(e) => updateState({ I_inj: parseFloat(e.target.value) })} className="w-full" />
-          </div>
-          
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Temperature: {state.temperature.toFixed(1)} °C</label>
-            <input type="range" min="0" max="40" step="0.1" value={state.temperature} onChange={(e) => updateState({ temperature: parseFloat(e.target.value) })} className="w-full" />
-          </div>
-          
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Na⁺ Conductance (TTX): {state.g_Na.toFixed(1)} mS/cm²</label>
-            <input type="range" min="0" max="200" step="1" value={state.g_Na} onChange={(e) => updateState({ g_Na: parseFloat(e.target.value) })} className="w-full" />
-          </div>
-          
-          <div className="space-y-2">
-            <label className="text-sm font-medium">K⁺ Conductance (TEA): {state.g_K.toFixed(1)} mS/cm²</label>
-            <input type="range" min="0" max="80" step="1" value={state.g_K} onChange={(e) => updateState({ g_K: parseFloat(e.target.value) })} className="w-full" />
-          </div>
-          
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Stimulus Mode</label>
-            <div className="flex gap-4">
-              <label><input type="radio" checked={state.pulse_mode === 0} onChange={() => updateState({ pulse_mode: 0 })} /> DC</label>
-              <label><input type="radio" checked={state.pulse_mode === 1} onChange={() => updateState({ pulse_mode: 1 })} /> Pulse</label>
-              <label><input type="radio" checked={state.pulse_mode === 2} onChange={() => updateState({ pulse_mode: 2 })} /> Twin</label>
-            </div>
-          </div>
-          
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Presets</label>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => applyPreset("normal")} className="bg-zinc-800 hover:bg-zinc-700 text-sm py-1 rounded">Normal AP</button>
-              <button onClick={() => applyPreset("ttx")} className="bg-zinc-800 hover:bg-zinc-700 text-sm py-1 rounded">TTX Block</button>
-              <button onClick={() => applyPreset("tea")} className="bg-zinc-800 hover:bg-zinc-700 text-sm py-1 rounded">TEA Block</button>
-              <button onClick={() => applyPreset("anode")} className="bg-zinc-800 hover:bg-zinc-700 text-sm py-1 rounded">Anode Break</button>
-            </div>
-          </div>
-          
-        </div>
+      <div className="pointer-events-none absolute bottom-2 left-3 font-mono text-[10px] text-slate-400">
+        voltage axis: −100 mV (bottom) to +60 mV (top) · window {WINDOW_MS.toFixed(0)} ms
       </div>
-    </div>
+    </SimLayout>
   );
 }
