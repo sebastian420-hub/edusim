@@ -23,7 +23,7 @@ Android 12+), so no WebGL fallback is planned; the existing "unsupported browser
 
 ---
 
-## Phase A — Local workflow (½ day) · do first
+## Phase A — Local workflow (½ day) · ✅ done
 
 GitHub Actions is currently not starting jobs on this account, so verification must not depend on it.
 
@@ -36,7 +36,9 @@ GitHub Actions is currently not starting jobs on this account, so verification m
 - **Cloud-session setup hook** (Claude Code `SessionStart`): install deps and the vgpu software
   renderer so future sessions can run GPU tests immediately.
 
-Done when: `git push` refuses a failing build; `pnpm export && npx serve out` runs all three sims.
+Done: `git push` runs `pnpm verify` (`.githooks/pre-push`, installed by `pnpm install`); `pnpm export` writes a
+static site to `out/` that passes the browser smoke test from a plain file server; `pnpm smoke:local` is the
+one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessions.
 
 ## Phase B — Interaction polish (1–2 days)
 

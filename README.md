@@ -34,8 +34,15 @@ explanatory message instead of a blank canvas.
 | `pnpm test` | Vitest: pure logic **and** headless-GPU tests of every shader |
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
-| `pnpm smoke` | Browser smoke test of a running build (`BASE_URL=http://localhost:3000`) |
+| `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
+| `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
+| `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
+
+### Git hooks
+
+`pnpm install` enables `.githooks/pre-push`, which runs `pnpm verify` before every push so a broken build
+never reaches GitHub (GitHub Actions may be unavailable). Bypass in an emergency with `git push --no-verify`.
 
 ### Running the GPU tests without a GPU
 
