@@ -6,7 +6,7 @@ export function GpuStatusOverlay({ status }: { status: GpuStatus }) {
 
   if (status.state === "loading") {
     return (
-      <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80" role="status">
+      <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80" role="status" data-testid="gpu-status" data-state="loading">
         <p className="animate-pulse text-sm text-slate-200">Initializing GPU…</p>
       </div>
     );
@@ -14,7 +14,7 @@ export function GpuStatusOverlay({ status }: { status: GpuStatus }) {
 
   const unsupported = status.state === "unsupported";
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90 p-6" role="alert">
+    <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90 p-6" role="alert" data-testid="gpu-status" data-state={status.state}>
       <div className="max-w-md text-center text-slate-200">
         <p className="mb-2 text-lg font-bold">
           {unsupported ? "WebGPU isn’t available in this browser" : "The GPU simulation failed"}

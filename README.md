@@ -35,6 +35,7 @@ explanatory message instead of a blank canvas.
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
 | `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
+| `pnpm e2e` | Full browser suite (18 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` (React strict mode) and a static export |
 | `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
 | `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
