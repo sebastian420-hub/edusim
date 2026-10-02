@@ -2,7 +2,9 @@ import Link from "next/link";
 import { accentOf, SUBJECTS } from "@/lib/subjects";
 import type { SimMeta } from "@/lib/subjects";
 import { Difficulty } from "./Difficulty";
+import { PlateArt } from "./PlateArt";
 import { roman } from "./format";
+import { POSTER } from "./poster";
 
 /** One working simulation, presented like a numbered figure: art on top, caption below. */
 export function Plate({ sim, number, index }: { sim: SimMeta; number: number; index: number }) {
@@ -10,6 +12,7 @@ export function Plate({ sim, number, index }: { sim: SimMeta; number: number; in
   return (
     <Link
       href={sim.path}
+      data-plate={sim.id}
       style={{ "--acc": accentOf(sim.subject), "--i": index + 2 } as React.CSSProperties}
       className="rise group block rounded-[3px] border border-hair bg-white/[0.015] transition-[border-color,background-color] duration-300 outline-none hover:border-(--acc) hover:bg-white/[0.035] focus-visible:border-(--acc) focus-visible:ring-2 focus-visible:ring-(--acc)"
     >
@@ -18,6 +21,24 @@ export function Plate({ sim, number, index }: { sim: SimMeta; number: number; in
         style={{ background: "radial-gradient(120% 90% at 25% 20%, color-mix(in srgb, var(--acc) 22%, #0a0c10), #0a0c10 70%)" }}
         data-plate-art={sim.id}
       >
+        <PlateArt id={sim.id}>
+          {sim.posterAlt && (
+            // Plain <img>: the poster is already optimised WebP (made by `pnpm posters`) with explicit size, so
+            // next/image would only add ~16 KB of client JavaScript to the home page for no benefit.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`/plates/${sim.id}.webp`}
+              alt={sim.posterAlt}
+              width={POSTER.width}
+              height={POSTER.height}
+              sizes="(min-width: 1024px) 240px, 70vw"
+              fetchPriority={index === 0 ? "high" : "auto"}
+              loading={index === 0 ? "eager" : "lazy"}
+              decoding="async"
+              className="h-full w-full object-cover transition-transform duration-[800ms] ease-out group-hover:scale-[1.04]"
+            />
+          )}
+        </PlateArt>
         <span className="absolute left-2.5 top-2.5 flex items-center gap-1.5 rounded-[2px] bg-bg/70 px-[7px] py-[5px] font-mono text-[10px] leading-none font-medium tracking-[0.1em] text-ink uppercase backdrop-blur-sm">
           <b className="live-dot h-1.5 w-1.5 rounded-full bg-live" />
           live

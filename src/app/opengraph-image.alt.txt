@@ -1,0 +1,1 @@
+EduSim: three live simulations — wave interference, a spiking neuron and Conway's Game of Life — beside the line "Science you can reach into."

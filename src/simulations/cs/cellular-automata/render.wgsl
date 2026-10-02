@@ -35,13 +35,15 @@ fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
   }
 
   if (cells[y * params.gridWidth + x] == 1u) {
-    // Themes: 0 = Classic Green, 1 = Cyberpunk Neon, 2 = Minimal White
+    // Themes: 0 = Classic Green, 1 = Cyberpunk Neon, 2 = Minimal White, 3 = Amber
     if (params.theme == 0u) {
       color = vec3f(0.0, 0.8, 0.2);
     } else if (params.theme == 1u) {
       color = vec3f(0.0, 1.0, 1.0);
-    } else {
+    } else if (params.theme == 2u) {
       color = vec3f(0.9, 0.9, 0.9);
+    } else {
+      color = vec3f(0.98, 0.75, 0.14);
     }
   }
   return vec4f(color, 1.0);

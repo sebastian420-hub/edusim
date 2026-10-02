@@ -37,7 +37,7 @@ export default function Home() {
               </dl>
             </div>
 
-            <ul className="-mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:none] sm:-mx-10 sm:px-10 lg:mx-0 lg:grid lg:grid-cols-3 lg:gap-4 lg:overflow-visible lg:px-0 lg:pb-0">
+            <ul className="-mx-5 flex scroll-pl-5 snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:none] sm:-mx-10 sm:scroll-pl-10 sm:px-10 lg:mx-0 lg:grid lg:grid-cols-3 lg:gap-4 lg:overflow-visible lg:px-0 lg:pb-0">
               {live.map((sim, i) => (
                 <li key={sim.id} className="w-[min(70vw,300px)] shrink-0 snap-start lg:w-auto">
                   <Plate sim={sim} number={i + 1} index={i} />

@@ -1,5 +1,9 @@
 # Main page redesign — plan
 
+> **Status: implemented** (all five phases). Choices made: captured posters, live-on-hover included, headline kept,
+> planned index kept, no light theme. Measured result: desktop 3.6 → 1.00 screens, phone 8.8 → 1.35; JavaScript
+> unchanged at ~457 KB (the framework runtime); HTML 9 KB gzipped; 0 axe violations. See the README for how it works.
+
 Goal: a main page that is **compact, well engineered and elegant** — a small piece of design in its own
 right — and that actually shows what EduSim is: live, GPU-computed science.
 

@@ -16,6 +16,8 @@ import zlib from "node:zlib";
 
 const BASE_URL = (process.env.BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const SHOTS = process.env.SHOTS_DIR; // optional: save screenshots here
+// Set E2E_DEV=1 when testing `next dev`: its bundles are unminified, so the size budgets do not apply.
+const IS_DEV = process.env.E2E_DEV === "1";
 // Static exports use trailing slashes; harmless elsewhere.
 const url = (p) => `${BASE_URL}${p}`;
 
@@ -205,18 +207,6 @@ await test("home: phone index is collapsed and expands on tap", async (page) => 
 }, { context: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
 
 await test("home: does not touch the GPU on load, and stays within size budgets", async (page) => {
-  const sizes = { script: 0, html: 0 };
-  const pending = [];
-  page.on("response", (r) =>
-    pending.push(
-      (async () => {
-        const type = r.request().resourceType();
-        const body = await r.body().catch(() => Buffer.alloc(0));
-        if (type === "script") sizes.script += body.length;
-        if (type === "document" && r.url().replace(/\/$/, "") === BASE_URL) sizes.html = zlib.gzipSync(body).length;
-      })(),
-    ),
-  );
   await page.addInitScript(() => {
     window.__gpuCalls = 0;
     if (navigator.gpu) {
@@ -229,13 +219,18 @@ await test("home: does not touch the GPU on load, and stays within size budgets"
   });
   await page.goto(url("/"), { waitUntil: "networkidle" });
   await page.waitForTimeout(1500);
-  await Promise.all(pending); // every response body counted before we add them up
   const calls = await page.evaluate(() => window.__gpuCalls);
   assert(calls === 0, `home requested a GPU adapter ${calls} time(s) before any interaction`);
+
+  // Sizes are measured by downloading exactly the scripts the page loaded, from Node: deterministic, unlike
+  // reading response bodies inside the browser (which can fail and silently under-count).
+  const scripts = await page.evaluate(() => performance.getEntriesByType("resource").map((e) => e.name).filter((n) => /\.js(\?|$)/.test(n)));
+  const script = (await Promise.all(scripts.map(async (u) => (await (await fetch(u)).arrayBuffer()).byteLength))).reduce((a, b) => a + b, 0);
+  const html = zlib.gzipSync(Buffer.from(await (await fetch(url("/"))).arrayBuffer())).length;
   // Baseline before the redesign: 456.6 KB (almost all of it the React + Next runtime). Must not grow.
-  assert(sizes.script <= 470 * 1024, `home JavaScript is ${(sizes.script / 1024).toFixed(0)} KB (budget 470 KB; 456.6 KB when the redesign started)`);
-  assert(sizes.html <= 14 * 1024, `home HTML is ${(sizes.html / 1024).toFixed(1)} KB gzipped (budget 14 KB)`);
-  console.log(`      (JS ${(sizes.script / 1024).toFixed(0)} KB, HTML ${(sizes.html / 1024).toFixed(1)} KB gzipped, GPU adapter requests: ${calls})`);
+  assert(IS_DEV || script <= 470 * 1024, `home JavaScript is ${(script / 1024).toFixed(1)} KB over ${scripts.length} files (budget 470 KB; 456.6 KB when the redesign started)`);
+  assert(IS_DEV || html <= 14 * 1024, `home HTML is ${(html / 1024).toFixed(1)} KB gzipped (budget 14 KB)`);
+  console.log(`      (JS ${(script / 1024).toFixed(1)} KB over ${scripts.length} files, HTML ${(html / 1024).toFixed(1)} KB gzipped, GPU adapter requests: ${calls})`);
 });
 
 await test("home: automated accessibility audit (axe) finds no violations, desktop and phone", async (page) => {
@@ -249,11 +244,126 @@ await test("home: automated accessibility audit (axe) finds no violations, deskt
   }
 });
 
+// ───────────────────────────── home: live plates ─────────────────────────────
+const PLATES = ["wave-interference", "cellular-automata", "hodgkin-huxley"];
+const liveCanvases = (page) => page.locator("[data-testid=plate-live]");
+const waitLive = (page, id, timeout = 45_000) => page.waitForSelector(`[data-plate="${id}"] [data-testid=plate-live][data-state=ready]`, { timeout });
+/** Fraction of lit pixels in a plate's live canvas (a blank canvas would be ~0). */
+const litFraction = (page, id) =>
+  page.evaluate(async (id) => {
+    const canvas = document.querySelector(`[data-plate="${id}"] canvas`);
+    const blob = await new Promise((resolve) => requestAnimationFrame(() => canvas.toBlob(resolve)));
+    const bitmap = await createImageBitmap(blob);
+    const ctx = new OffscreenCanvas(bitmap.width, bitmap.height).getContext("2d");
+    ctx.drawImage(bitmap, 0, 0);
+    const { data } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    let lit = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i] + data[i + 1] + data[i + 2] > 90) lit++;
+    return lit / (bitmap.width * bitmap.height);
+  }, id);
+
+await test("home plates: hover runs the real simulation (all three), one at a time, and leaving restores the poster", async (page) => {
+  await page.goto(url("/"));
+  assert((await liveCanvases(page).count()) === 0, "no live canvas before any intent");
+  for (const id of PLATES) {
+    await page.locator(`[data-plate="${id}"]`).hover();
+    await waitLive(page, id);
+    assert((await liveCanvases(page).count()) === 1, `${id}: more than one live plate`);
+    assert((await page.locator(`[data-plate="${id}"] img`).count()) === 1, `${id}: poster should stay underneath`);
+    // "ready" arrives a tick before the first frame is presented, so poll for real content.
+    let lit = 0;
+    for (let i = 0; i < 30 && lit <= 0.01; i++) {
+      lit = await litFraction(page, id);
+      if (lit <= 0.01) await page.waitForTimeout(300);
+    }
+    assert(lit > 0.01, `${id}: live canvas looks blank (lit fraction ${lit.toFixed(4)})`);
+  }
+  // Moving from the last plate to the first hands over: the first starts, the last stops.
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await waitLive(page, PLATES[0]);
+  await page.waitForFunction((id) => document.querySelectorAll(`[data-plate="${id}"] canvas`).length === 0, PLATES[2], { timeout: 10_000 });
+  assert((await liveCanvases(page).count()) === 1, "exactly one live canvas after hand-over");
+  await page.mouse.move(5, 5);
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=plate-live]").length === 0, null, { timeout: 10_000 });
+  await shot(page, "home-live");
+});
+
+await test("home plates: keyboard focus starts the live preview", async (page) => {
+  await page.goto(url("/"));
+  await page.keyboard.press("Tab"); // masthead has no links; the first tab stop is the first plate
+  const focused = await page.evaluate(() => document.activeElement?.getAttribute("data-plate"));
+  assert(focused === PLATES[0], `first tab stop is ${focused}`);
+  await waitLive(page, PLATES[0]);
+  await page.keyboard.press("Tab");
+  await waitLive(page, PLATES[1]);
+  await page.waitForFunction((id) => document.querySelectorAll(`[data-plate="${id}"] canvas`).length === 0, PLATES[0], { timeout: 10_000 });
+});
+
+await test("home plates: reduced motion never starts a preview and never requests the GPU", async (page) => {
+  await page.addInitScript(() => {
+    window.__gpuCalls = 0;
+    const original = GPU.prototype.requestAdapter;
+    GPU.prototype.requestAdapter = function (...args) {
+      window.__gpuCalls++;
+      return original.apply(this, args);
+    };
+  });
+  await page.goto(url("/"));
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await page.waitForTimeout(3000);
+  assert((await liveCanvases(page).count()) === 0, "live preview started despite prefers-reduced-motion");
+  assert((await page.evaluate(() => window.__gpuCalls)) === 0, "GPU was requested despite prefers-reduced-motion");
+  assert(await page.locator(`[data-plate="${PLATES[0]}"] img`).isVisible(), "poster should remain");
+}, { context: { reducedMotion: "reduce" } });
+
+await test("home plates: without WebGPU hovering does nothing and raises no errors", async (page) => {
+  await page.goto(url("/"));
+  await page.locator(`[data-plate="${PLATES[1]}"]`).hover();
+  await page.waitForTimeout(2000);
+  assert((await liveCanvases(page).count()) === 0, "preview started without WebGPU");
+  assert(await page.locator(`[data-plate="${PLATES[1]}"] img`).isVisible(), "poster should remain");
+}, { initScript: () => Object.defineProperty(Navigator.prototype, "gpu", { get: () => undefined, configurable: true }) });
+
+await test("home plates: a GPU failure falls back to the poster and is not retried", async (page) => {
+  await page.addInitScript(() => {
+    window.__gpuCalls = 0;
+    GPU.prototype.requestAdapter = async function () {
+      window.__gpuCalls++;
+      return null; // WebGPU exists but yields no adapter, as on some blocklisted machines
+    };
+  });
+  await page.goto(url("/"));
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await page.waitForFunction(() => window.__gpuCalls >= 1, null, { timeout: 15_000 });
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=plate-live]").length === 0, null, { timeout: 10_000 });
+  assert(await page.locator(`[data-plate="${PLATES[0]}"] img`).isVisible(), "poster should remain after a failure");
+  const calls = await page.evaluate(() => window.__gpuCalls);
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(400);
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await page.waitForTimeout(1500);
+  assert((await page.evaluate(() => window.__gpuCalls)) === calls, "a failed preview must not be retried on every hover");
+});
+
+await test("home plates: scrolling a live plate out of view stops it", async (page) => {
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await page.goto(url("/"));
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await waitLive(page, PLATES[0]);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=plate-live]").length === 0, null, { timeout: 10_000 });
+});
+
 await test("routes: unknown simulations return 404", async (page) => {
   for (const p of ["/physics/nope", "/chemistry/titration", "/biology/wave-interference"]) {
     const res = await page.goto(url(p));
     assert(res.status() === 404, `${p} -> ${res.status()}`);
   }
+  // The 404 page is on-brand, explains itself, offers the way home and passes the accessibility audit.
+  assert((await text(page, "h1")).includes("doesn’t exist"), "404 headline");
+  assert(await page.getByRole("link", { name: "← All simulations" }).isVisible(), "404 should link home");
+  const violations = (await new AxeBuilder({ page }).analyze()).violations.map((v) => `${v.id}: ${v.help}`);
+  assert(violations.length === 0, `404 page a11y: ${violations.join(" | ")}`);
 }, { allowErrors: [/404/] });
 
 // ───────────────────────────── wave interference ─────────────────────────────
@@ -284,12 +394,15 @@ await test("wave: copy link, save image (non-blank PNG)", async (page) => {
   await page.getByRole("button", { name: "Copy link" }).click();
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   assert(clip === page.url() && clip.includes("mode=two-points"), `clipboard: ${clip}`);
-  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Save image" }).click()]);
-  const file = path.join(os.tmpdir(), `edusim-${Date.now()}.png`);
-  await download.saveAs(file);
-  const size = fs.statSync(file).size;
-  fs.rmSync(file);
-  assert(download.suggestedFilename().endsWith(".png") && size > 20_000, `PNG too small (blank?): ${size}B`);
+  // Repeated, because a snapshot taken in a tick the (deliberately skipping) render loop did not draw would be blank.
+  for (let i = 1; i <= 4; i++) {
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Save image" }).click()]);
+    const file = path.join(os.tmpdir(), `edusim-${Date.now()}-${i}.png`);
+    await download.saveAs(file);
+    const size = fs.statSync(file).size;
+    fs.rmSync(file);
+    assert(download.suggestedFilename().endsWith(".png") && size > 20_000, `download ${i}: PNG too small (blank?): ${size}B`);
+  }
 });
 
 await test("wave: detector graph, fringe measurement matches theory, probe, ruler, drag", async (page) => {

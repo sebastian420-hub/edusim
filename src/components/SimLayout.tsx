@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
-import { SUBJECTS } from "@/lib/subjects";
+import { accentOf, SUBJECTS } from "@/lib/subjects";
 import type { Difficulty, Subject } from "@/lib/subjects";
 import { captureCanvas } from "@/lib/gpu/runtime";
 import type { GpuStatus } from "@/lib/gpu/runtime";
@@ -160,7 +160,8 @@ export function SimLayout({
         </Link>
         <h1 className="text-lg font-bold tracking-tight md:text-xl">{title}</h1>
         <span className="flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-300">
-          <span aria-hidden>{subjectMeta.icon}</span> {subjectMeta.label}
+          <span aria-hidden className="h-1.5 w-1.5 rounded-full" style={{ background: accentOf(subject) }} />
+          {subjectMeta.label}
         </span>
         <span
           className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${DIFFICULTY_STYLES[difficulty]}`}

@@ -35,7 +35,7 @@ explanatory message instead of a blank canvas.
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
 | `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
-| `pnpm e2e` | Full browser suite (18 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` (React strict mode) and a static export |
+| `pnpm e2e` | Full browser suite (37 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export |
 | `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
 | `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
@@ -85,6 +85,23 @@ src/
 - **Measurement:** sims get a TypeScript twin of the shader (`wave.ts`, `hh.ts`) used for graphs and readouts,
   and a GPU test proving the two agree. `MiniChart` is a small SVG chart for readouts like the firing-rate curve.
 
+## The home page
+
+A compact editorial layout (about one screen on a desktop, 1.35 on a phone): three numbered *plates* for the working
+simulations and a typographic index of the planned ones. Design tokens (colours, type scale, motion) live in
+`src/app/globals.css`; components in `src/components/home/`. The plan and measurements are in
+[`docs/HOMEPAGE-PLAN.md`](docs/HOMEPAGE-PLAN.md).
+
+- **Posters.** Each plate shows a poster captured from the *real* simulation: `pnpm posters` builds, serves, drives
+  each simulation from fixed settings, reads only the canvas pixels, and writes `public/plates/<id>.webp` plus the
+  social-preview image `src/app/opengraph-image.jpg`. Re-run it after changing how a simulation looks.
+- **Live on intent.** Hovering or keyboard-focusing a plate runs the real simulation inside it
+  (`simulations/previews.ts`, loaded only then). Rules, in `components/home/intent.ts`: one live plate at a time;
+  never on touch, with `prefers-reduced-motion` or without WebGPU; stops when scrolled out of view or the tab is
+  hidden; a GPU failure leaves the poster. The home page uses no GPU until the visitor shows intent.
+- **Budgets** (enforced by `pnpm e2e`): ≤ 1.15 screens tall on desktop, ≤ 1.4 on a phone, no horizontal overflow,
+  JavaScript ≤ 470 KB (the React + Next runtime is ~457 KB of that), HTML ≤ 14 KB gzipped, zero axe violations.
+
 ## Adaptive quality
 
 Simulations run through a paced render loop (`ctx.loop`): it skips ticks while the GPU is still busy, so a slow
@@ -97,8 +114,9 @@ A badge shows when resolution is reduced. To pin full resolution (projector, scr
 
 1. Create `src/simulations/<subject>/<id>/` with `*.wgsl`, `sim.ts` (a `SimFactory` that returns a handle with
    `dispose()`), and `controls.tsx` (default export; use `useGpuSim(factory)` and `SimLayout`).
-2. Set `implemented: true` for it in `src/lib/subjects.ts`.
-3. Register it in `src/simulations/loaders.tsx`.
+2. Set `implemented: true` for it in `src/lib/subjects.ts`, with a `tagline` and `posterAlt`.
+3. Register it in `src/simulations/loaders.tsx` and add its home-page preview to `src/simulations/previews.ts`.
+4. Run `pnpm posters` to generate its plate poster (add its capture settings to `scripts/make-posters.mjs`).
 
 `src/lib/subjects.test.ts` fails if the catalog and the loaders disagree. Put pure logic in its own module
 (see `hh.ts`, `rules.ts`) so it can be unit-tested, and add a headless-GPU test for any new shader in
