@@ -81,9 +81,9 @@ src/
 - **`SimLayout`:** copy link, save image, reset to defaults, keyboard shortcuts (Space, `.`, `R`, `?`) and an
   optional Challenges tab.
 - **Challenges:** data in `lib/challenges.ts` format (predict → set up → goal check → explanation), rendered by
-  `ChallengesPanel`. See `simulations/physics/wave-interference/challenges.ts`.
-- **Measurement:** analytic sims get a TypeScript twin of the shader (`wave.ts`) used for graphs and readouts,
-  and a GPU test proving the two agree.
+  `ChallengesPanel`. See `simulations/physics/wave-interference/challenges.ts` and `simulations/biology/hodgkin-huxley/challenges.ts`.
+- **Measurement:** sims get a TypeScript twin of the shader (`wave.ts`, `hh.ts`) used for graphs and readouts,
+  and a GPU test proving the two agree. `MiniChart` is a small SVG chart for readouts like the firing-rate curve.
 
 ## Adaptive quality
 

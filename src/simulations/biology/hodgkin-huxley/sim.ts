@@ -15,8 +15,17 @@ export const DEFAULT_SIM_PARAMS: HHSimParams = { ...DEFAULT_PARAMS, timeScale: 3
 /** Upper bound on integration steps per frame (the integrator runs on a single GPU thread). */
 const MAX_STEPS_PER_FRAME = 1500;
 
+export interface HHSnapshot {
+  /** Ring buffer of (V, m, h, n) samples. */
+  history: Float32Array;
+  /** Index of the oldest sample (where the next one will be written). */
+  head: number;
+}
+
 export interface HHHandle extends SimHandle {
   setParams(params: Partial<HHSimParams>): void;
+  /** Reads the GPU history back, for the cursor readout. */
+  snapshot(): Promise<HHSnapshot>;
   play(): void;
   pause(): void;
   reset(): void;
@@ -104,6 +113,10 @@ export function createHodgkinHuxley({ gpu, surface, loop: frameLoop }: SimContex
       playing = false;
     },
     reset: resetBuffers,
+    async snapshot() {
+      const [history, meta] = await Promise.all([historyBuffer.read(), metaBuffer.read()]);
+      return { history: new Float32Array(history), head: new Uint32Array(meta)[0] };
+    },
     dispose: () => loop.stop(),
   };
 }
