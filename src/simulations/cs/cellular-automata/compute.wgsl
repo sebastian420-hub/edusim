@@ -1,4 +1,3 @@
-export const shaderSource = `
 @group(0) @binding(0) var<storage, read> cellsIn: array<u32>;
 @group(0) @binding(1) var<storage, read_write> cellsOut: array<u32>;
 @group(0) @binding(2) var<uniform> params: SimParams;
@@ -10,7 +9,7 @@ struct SimParams {
   rule_survive: u32, // bitmask for survive rules (e.g., 0b000001100 = S23)
 }
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(8, 8) // keep in sync with WORKGROUP_SIZE in workgroup.ts
 fn main(@builtin(global_invocation_id) id: vec3u) {
   let x = id.x;
   let y = id.y;
@@ -38,4 +37,3 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     cellsOut[idx] = select(0u, 1u, (params.rule_birth & neighborBit) != 0u);
   }
 }
-`;

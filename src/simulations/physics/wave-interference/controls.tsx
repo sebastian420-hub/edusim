@@ -1,112 +1,126 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import { createWaveRenderer, DEFAULTS, WaveUniforms } from "./sim";
+import { useEffect, useState } from "react";
+import { ParameterSlider } from "@/components/ParameterSlider";
+import { SimLayout } from "@/components/SimLayout";
+import { useGpuSim } from "@/lib/gpu/useGpuSim";
+import { createWaveSim, DEFAULTS } from "./sim";
+import type { WaveMode, WaveParams, WaveView } from "./sim";
 
-// Mock ParameterSlider since we don't have its definition
-const ParameterSlider = ({ label, min, max, step, value, onChange }: any) => (
-  <div className="flex flex-col gap-1 mb-2">
-    <label className="text-sm font-medium flex justify-between">
-      {label} <span>{value}</span>
-    </label>
-    <input 
-      type="range" min={min} max={max} step={step} value={value} 
-      onChange={(e) => onChange(parseFloat(e.target.value))}
-      className="w-full"
-    />
-  </div>
-);
+const MODES: { id: WaveMode; label: string }[] = [
+  { id: "point", label: "Single Point" },
+  { id: "two-points", label: "Two Points" },
+  { id: "single-slit", label: "Single Slit" },
+  { id: "double-slit", label: "Double Slit" },
+];
+
+const VIEWS: { id: WaveView; label: string }[] = [
+  { id: "amplitude", label: "Amplitude" },
+  { id: "intensity", label: "Intensity" },
+  { id: "water", label: "3D Water" },
+];
 
 export default function WaveInterferenceControls() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rendererRef = useRef<any>(null);
-  const [params, setParams] = useState<WaveUniforms>(DEFAULTS);
+  const { canvasRef, status, sim } = useGpuSim(createWaveSim);
+  const [params, setParams] = useState<WaveParams>(DEFAULTS);
 
   useEffect(() => {
-    if (!canvasRef.current) return;
-    
-    let isSubscribed = true;
-    createWaveRenderer(canvasRef.current).then(renderer => {
-      if (!isSubscribed) {
-        renderer.dispose();
-        return;
-      }
-      rendererRef.current = renderer;
-    });
-    
-    return () => {
-      isSubscribed = false;
-      if (rendererRef.current) {
-        rendererRef.current.dispose();
-      }
-    };
-  }, []);
+    sim?.setParams(params);
+  }, [sim, params]);
 
-  useEffect(() => {
-    if (rendererRef.current) {
-      rendererRef.current.setUniforms(params);
-    }
-  }, [params]);
+  const update = <K extends keyof WaveParams>(key: K, value: WaveParams[K]) =>
+    setParams((prev) => ({ ...prev, [key]: value }));
 
-  const updateParam = (key: keyof WaveUniforms, value: any) => {
-    setParams(prev => ({ ...prev, [key]: value }));
-  };
+  const hasSeparation = params.mode === "two-points" || params.mode === "double-slit";
+  const hasSlits = params.mode === "single-slit" || params.mode === "double-slit";
 
-  const setPreset = (preset: string) => {
-    switch (preset) {
-      case 'double-slit':
-        setParams(prev => ({ ...prev, sourceCount: 2, source1: [0, prev.slitSeparation/2], source2: [0, -prev.slitSeparation/2] }));
-        break;
-      case 'single-point':
-        setParams(prev => ({ ...prev, sourceCount: 1, source1: [-1.5, 0] }));
-        break;
-      case 'two-points':
-        setParams(prev => ({ ...prev, sourceCount: 2, source1: [-1.0, 0.5], source2: [-1.0, -0.5] }));
-        break;
-    }
-  };
+  const controls = (
+    <>
+      <fieldset>
+        <legend className="mb-2 text-sm font-semibold text-slate-200">Source</legend>
+        <div className="grid grid-cols-2 gap-2">
+          {MODES.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              aria-pressed={params.mode === m.id}
+              onClick={() => update("mode", m.id)}
+              className={`rounded px-2 py-1.5 text-sm transition-colors ${
+                params.mode === m.id ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend className="mb-2 text-sm font-semibold text-slate-200">View</legend>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          {VIEWS.map((v) => (
+            <label key={v.id} className="flex items-center gap-1.5 text-sm text-slate-300">
+              <input
+                type="radio"
+                name="wave-view"
+                checked={params.view === v.id}
+                onChange={() => update("view", v.id)}
+              />
+              {v.label}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <ParameterSlider label="Frequency" min={0.5} max={10} step={0.1} value={params.frequency} onChange={(v) => update("frequency", v)} />
+      <ParameterSlider label="Amplitude" min={0.1} max={2} step={0.1} value={params.amplitude} onChange={(v) => update("amplitude", v)} />
+      <ParameterSlider label="Wave Speed" min={0.1} max={3} step={0.1} value={params.waveSpeed} onChange={(v) => update("waveSpeed", v)} />
+      <ParameterSlider label="Damping" min={0} max={0.1} step={0.01} value={params.damping} onChange={(v) => update("damping", v)} />
+      {hasSlits && (
+        <ParameterSlider label="Slit Width" min={0.05} max={0.5} step={0.05} value={params.slitWidth} onChange={(v) => update("slitWidth", v)} />
+      )}
+      {hasSeparation && (
+        <ParameterSlider
+          label={params.mode === "double-slit" ? "Slit Separation" : "Source Separation"}
+          min={0.1}
+          max={1.5}
+          step={0.1}
+          value={params.separation}
+          onChange={(v) => update("separation", v)}
+        />
+      )}
+    </>
+  );
+
+  const explanation = (
+    <>
+      <p>
+        Waves from different sources add together. Where crests meet crests the waves reinforce
+        (constructive interference); where a crest meets a trough they cancel (destructive).
+      </p>
+      <p>
+        <strong className="text-slate-100">Slits.</strong> By the Huygens–Fresnel principle every point in a
+        slit acts as a new source. A narrower slit spreads the wave out more (diffraction); two slits produce
+        fringes spaced by roughly <em>λL / d</em>.
+      </p>
+      <p>
+        Switch to <strong className="text-slate-100">Intensity</strong> to see the time-averaged pattern — the
+        bright and dark fringes stay fixed even though the waves keep moving.
+      </p>
+    </>
+  );
 
   return (
-    <div className="flex flex-col md:flex-row gap-6 p-4">
-      <div className="flex-1 min-h-[500px] bg-black rounded-lg overflow-hidden relative">
-        <canvas ref={canvasRef} className="w-full h-full block" />
-      </div>
-      <div className="w-full md:w-80 bg-gray-800 text-white p-4 rounded-lg flex flex-col gap-4 overflow-y-auto max-h-[800px]">
-        <h2 className="text-xl font-bold">Wave Interference</h2>
-        
-        <div className="flex gap-2 text-sm flex-wrap">
-          <button className="px-2 py-1 bg-blue-900 hover:bg-blue-800 text-white rounded" onClick={() => setPreset('double-slit')}>Double Slit</button>
-          <button className="px-2 py-1 bg-blue-900 hover:bg-blue-800 text-white rounded" onClick={() => setPreset('single-point')}>Single Point</button>
-          <button className="px-2 py-1 bg-blue-900 hover:bg-blue-800 text-white rounded" onClick={() => setPreset('two-points')}>Two Points</button>
-        </div>
-
-        <div className="flex flex-col gap-2 mt-2">
-          <div className="text-sm font-semibold">View Mode</div>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-1 text-sm"><input type="radio" name="viewMode" checked={params.viewMode === 0} onChange={() => updateParam('viewMode', 0)} /> Amplitude</label>
-            <label className="flex items-center gap-1 text-sm"><input type="radio" name="viewMode" checked={params.viewMode === 1} onChange={() => updateParam('viewMode', 1)} /> Intensity</label>
-            <label className="flex items-center gap-1 text-sm"><input type="radio" name="viewMode" checked={params.viewMode === 2} onChange={() => updateParam('viewMode', 2)} /> 3D Water</label>
-          </div>
-        </div>
-
-        <ParameterSlider label="Frequency" min={0.5} max={10.0} step={0.1} value={params.frequency} onChange={(v: number) => updateParam('frequency', v)} />
-        <ParameterSlider label="Amplitude" min={0.1} max={2.0} step={0.1} value={params.amplitude} onChange={(v: number) => updateParam('amplitude', v)} />
-        <ParameterSlider label="Wave Speed" min={0.1} max={3.0} step={0.1} value={params.waveSpeed} onChange={(v: number) => updateParam('waveSpeed', v)} />
-        <ParameterSlider label="Damping" min={0.0} max={0.1} step={0.01} value={params.damping} onChange={(v: number) => updateParam('damping', v)} />
-        
-        {params.sourceCount > 1 && (
-          <>
-            <ParameterSlider label="Slit Width" min={0.05} max={0.5} step={0.05} value={params.slitWidth} onChange={(v: number) => updateParam('slitWidth', v)} />
-            <ParameterSlider label="Slit Separation" min={0.1} max={1.5} step={0.1} value={params.slitSeparation} onChange={(v: number) => {
-              updateParam('slitSeparation', v);
-              // Update source positions for double slit if they are at x=0
-              if (params.source1[0] === 0) {
-                updateParam('source1', [0, v/2]);
-                updateParam('source2', [0, -v/2]);
-              }
-            }} />
-          </>
-        )}
-      </div>
-    </div>
+    <SimLayout
+      title="Wave Interference & Diffraction"
+      subject="physics"
+      difficulty="easy"
+      status={status}
+      controls={controls}
+      explanation={explanation}
+      onPlayPause={(playing) => (playing ? sim?.play() : sim?.pause())}
+      onReset={() => sim?.reset()}
+    >
+      <canvas ref={canvasRef} className="block h-full w-full" />
+    </SimLayout>
   );
 }

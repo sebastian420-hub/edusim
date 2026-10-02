@@ -1,326 +1,245 @@
 "use client";
-
 import { useEffect, useRef, useState } from "react";
-import { CellularAutomataSim } from "./sim";
-import { patterns } from "./patterns";
+import type { PointerEvent, WheelEvent } from "react";
+import { ParameterSlider } from "@/components/ParameterSlider";
+import { SimLayout } from "@/components/SimLayout";
+import { useGpuSim } from "@/lib/gpu/useGpuSim";
+import { createCellularAutomata, GRID_SIZES } from "./sim";
+import type { CellularAutomataHandle, CellularAutomataParams } from "./sim";
+import { DEFAULT_PATTERN, patterns } from "./patterns";
+import { RULE_PRESETS } from "./rules";
+
+type Tool = "pan" | "draw" | "erase";
+
+const TOOLS: { id: Tool; label: string }[] = [
+  { id: "pan", label: "Pan" },
+  { id: "draw", label: "Draw" },
+  { id: "erase", label: "Erase" },
+];
+
+const selectClass = "rounded border border-slate-700 bg-slate-800 p-2 text-sm text-slate-200";
 
 export default function CellularAutomataControls() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const simRef = useRef<CellularAutomataSim | null>(null);
-
-  const [isPlaying, setIsPlaying] = useState(false);
   const [generation, setGeneration] = useState(0);
-  const [gridSize, setGridSize] = useState(256);
-  const [speed, setSpeed] = useState(10);
-  const [ruleB, setRuleB] = useState("3");
-  const [ruleS, setRuleS] = useState("23");
-  const [theme, setTheme] = useState(0);
-  const [drawingMode, setDrawingMode] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  // The factory must be stable, so it is created once and closes over the React state setters.
+  const [factory] = useState(
+    () => (ctx: Parameters<typeof createCellularAutomata>[0]) =>
+      createCellularAutomata(ctx, { onGeneration: setGeneration, onZoom: setZoom }),
+  );
+  const { canvasRef, status, sim } = useGpuSim<CellularAutomataHandle>(factory);
 
-  // Pan and Zoom state
-  const [zoom, setZoom] = useState(1.0);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const isDragging = useRef(false);
-  const lastMouse = useRef({ x: 0, y: 0 });
-
-  useEffect(() => {
-    if (!canvasRef.current) return;
-
-    const canvas = canvasRef.current;
-    
-    // Set actual canvas resolution based on container size
-    const resizeObserver = new ResizeObserver(entries => {
-      for (let entry of entries) {
-        const { width, height } = entry.contentRect;
-        canvas.width = width * window.devicePixelRatio;
-        canvas.height = height * window.devicePixelRatio;
-        if (simRef.current) {
-          // Force a re-render
-          simRef.current.setPanZoom(pan.x, pan.y, zoom);
-        }
-      }
-    });
-    
-    resizeObserver.observe(canvas.parentElement!);
-
-    const sim = new CellularAutomataSim(canvas, gridSize);
-    sim.onGenerationChange = setGeneration;
-    sim.initialize();
-    simRef.current = sim;
-
-    return () => {
-      sim.destroy();
-      resizeObserver.disconnect();
-    };
-  }, []); // Run once on mount
+  const [params, setParams] = useState<Pick<CellularAutomataParams, "birth" | "survive" | "speed" | "theme">>({
+    birth: "3",
+    survive: "23",
+    speed: 10,
+    theme: 0,
+  });
+  const [gridSize, setGridSize] = useState<number>(256);
+  const [tool, setTool] = useState<Tool>("pan");
+  const dragging = useRef(false);
+  const lastPointer = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    if (simRef.current) simRef.current.setRules(ruleB, ruleS);
-  }, [ruleB, ruleS]);
+    sim?.setParams(params);
+  }, [sim, params]);
 
   useEffect(() => {
-    if (simRef.current) {
-      simRef.current.setSpeed(speed);
+    sim?.setGridSize(gridSize);
+  }, [sim, gridSize]);
+
+  const update = (patch: Partial<typeof params>) => setParams((prev) => ({ ...prev, ...patch }));
+
+  const local = (e: PointerEvent | WheelEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const onPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (!sim) return;
+    dragging.current = true;
+    lastPointer.current = { x: e.clientX, y: e.clientY };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    if (tool !== "pan") {
+      const p = local(e);
+      sim.paint(p.x, p.y, tool === "draw");
     }
-  }, [speed]);
+  };
 
-  useEffect(() => {
-    if (simRef.current) simRef.current.setTheme(theme);
-  }, [theme]);
-  
-  useEffect(() => {
-    if (simRef.current) simRef.current.setPanZoom(pan.x, pan.y, zoom);
-  }, [pan, zoom]);
-
-  const handlePlayPause = () => {
-    if (!simRef.current) return;
-    if (isPlaying) {
-      simRef.current.pause();
+  const onPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (!sim || !dragging.current) return;
+    if (tool === "pan") {
+      sim.panBy(e.clientX - lastPointer.current.x, e.clientY - lastPointer.current.y);
+      lastPointer.current = { x: e.clientX, y: e.clientY };
     } else {
-      simRef.current.play();
-    }
-    setIsPlaying(!isPlaying);
-  };
-
-  const handleStep = () => {
-    if (simRef.current) {
-      simRef.current.pause();
-      setIsPlaying(false);
-      simRef.current.step();
+      const p = local(e);
+      sim.paint(p.x, p.y, tool === "draw");
     }
   };
 
-  const handleClear = () => {
-    if (simRef.current) simRef.current.clear();
+  const endDrag = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    sim?.endStroke();
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
-  const handleRandomize = () => {
-    if (simRef.current) simRef.current.randomize();
+  const onWheel = (e: WheelEvent<HTMLCanvasElement>) => {
+    const p = local(e);
+    sim?.zoomAt(e.deltaY > 0 ? 0.9 : 1.1, p.x, p.y);
   };
 
-  const handleLoadPattern = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    if (simRef.current && e.target.value) {
-      simRef.current.loadPattern(e.target.value);
-    }
-  };
+  const controls = (
+    <>
+      <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-800/50 p-3">
+        <span className="text-sm text-slate-400">Generation</span>
+        <span className="font-mono text-xl text-green-400">{generation}</span>
+      </div>
 
-  const handleGridSizeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const size = parseInt(e.target.value);
-    setGridSize(size);
-    if (simRef.current) {
-      simRef.current.setGridSize(size);
-    }
-  };
+      <ParameterSlider label="Speed" unit=" gen/s" min={1} max={60} step={1} color="green" value={params.speed} onChange={(v) => update({ speed: v })} />
 
-  // Canvas Interactions
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (drawingMode) {
-      if (simRef.current) {
-        const rect = canvasRef.current!.getBoundingClientRect();
-        simRef.current.toggleCell(e.clientX - rect.left, e.clientY - rect.top);
-      }
-    } else {
-      isDragging.current = true;
-      lastMouse.current = { x: e.clientX, y: e.clientY };
-      canvasRef.current?.setPointerCapture(e.pointerId);
-    }
-  };
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium text-slate-200">Grid size</span>
+        <select value={gridSize} onChange={(e) => setGridSize(Number(e.target.value))} className={selectClass}>
+          {GRID_SIZES.map((s) => (
+            <option key={s} value={s}>
+              {s} × {s}
+            </option>
+          ))}
+        </select>
+      </label>
 
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (isDragging.current && !drawingMode) {
-      const dx = e.clientX - lastMouse.current.x;
-      const dy = e.clientY - lastMouse.current.y;
-      
-      const rect = canvasRef.current!.getBoundingClientRect();
-      const nx = pan.x + (dx / rect.width);
-      const ny = pan.y + (dy / rect.height);
+      <fieldset>
+        <legend className="mb-2 text-sm font-medium text-slate-200">Rules (B/S)</legend>
+        <div className="flex gap-3">
+          {(["birth", "survive"] as const).map((key) => (
+            <label key={key} className="flex flex-1 flex-col gap-1 text-xs text-slate-400">
+              {key === "birth" ? "Birth" : "Survive"}
+              <span className="flex items-center gap-2">
+                <span className="text-slate-500">{key === "birth" ? "B" : "S"}</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={params[key]}
+                  onChange={(e) => update({ [key]: e.target.value.replace(/[^0-8]/g, "") })}
+                  className="w-full rounded border border-slate-700 bg-slate-800 p-1.5 font-mono text-sm text-slate-200"
+                />
+              </span>
+            </label>
+          ))}
+        </div>
+        <select
+          aria-label="Rule preset"
+          value=""
+          onChange={(e) => {
+            const preset = RULE_PRESETS.find((r) => r.name === e.target.value);
+            if (preset) update({ birth: preset.birth, survive: preset.survive });
+          }}
+          className={`mt-2 w-full ${selectClass}`}
+        >
+          <option value="">Rule presets…</option>
+          {RULE_PRESETS.map((r) => (
+            <option key={r.name} value={r.name}>
+              {r.name} (B{r.birth}/S{r.survive})
+            </option>
+          ))}
+        </select>
+      </fieldset>
 
-      setPan({ x: nx, y: ny });
-      lastMouse.current = { x: e.clientX, y: e.clientY };
-    }
-  };
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium text-slate-200">Pattern library</span>
+        <select value="" onChange={(e) => e.target.value && sim?.loadPattern(e.target.value)} className={selectClass}>
+          <option value="">Load pattern…</option>
+          {patterns.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    isDragging.current = false;
-    canvasRef.current?.releasePointerCapture(e.pointerId);
-  };
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={() => sim?.clear()} className="rounded bg-red-900/50 px-3 py-2 text-sm font-medium text-red-200 transition-colors hover:bg-red-800/50">
+          Clear
+        </button>
+        <button type="button" onClick={() => sim?.randomize()} className="rounded bg-slate-700 px-3 py-2 text-sm font-medium text-slate-100 transition-colors hover:bg-slate-600">
+          Random
+        </button>
+      </div>
 
-  const handleWheel = (e: React.WheelEvent) => {
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-    setZoom(z => Math.max(0.1, Math.min(z * zoomFactor, 20.0)));
-  };
+      <fieldset>
+        <legend className="mb-2 text-sm font-medium text-slate-200">Mouse tool</legend>
+        <div className="grid grid-cols-3 gap-2">
+          {TOOLS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              aria-pressed={tool === t.id}
+              onClick={() => setTool(t.id)}
+              className={`rounded px-2 py-1.5 text-sm transition-colors ${
+                tool === t.id ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium text-slate-200">Color theme</span>
+        <select value={params.theme} onChange={(e) => update({ theme: Number(e.target.value) })} className={selectClass}>
+          <option value={0}>Classic Green</option>
+          <option value={1}>Cyberpunk Neon</option>
+          <option value={2}>Minimal White</option>
+        </select>
+      </label>
+    </>
+  );
+
+  const explanation = (
+    <>
+      <p>
+        A cellular automaton is a grid of cells that live or die according to a simple local rule. In{" "}
+        <strong className="text-slate-100">Conway’s Game of Life</strong> (B3/S23) a dead cell with exactly 3
+        living neighbours is born, and a living cell with 2 or 3 neighbours survives.
+      </p>
+      <p>
+        Every cell updates at once, which is why this runs well on the GPU: one compute shader invocation per
+        cell, millions of cells per generation. The grid wraps around like a torus.
+      </p>
+      <p className="text-slate-400">
+        Pick the Draw or Erase tool to edit cells. Scroll to zoom at the cursor. Default pattern: {DEFAULT_PATTERN}.
+      </p>
+    </>
+  );
 
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-neutral-950 text-neutral-200 font-sans">
-      {/* Controls Sidebar */}
-      <div className="w-full md:w-80 p-6 bg-neutral-900 border-r border-neutral-800 flex flex-col gap-6 overflow-y-auto">
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Cellular Automata</h1>
-          <p className="text-sm text-neutral-400">WebGPU Compute Shader</p>
-        </div>
-
-        <div className="flex items-center justify-between bg-neutral-800/50 p-3 rounded-lg border border-neutral-700/50">
-          <span className="text-sm text-neutral-400">Generation</span>
-          <span className="font-mono text-xl text-green-400">{generation}</span>
-        </div>
-
-        {/* Playback Controls */}
-        <div className="flex flex-col gap-3">
-          <div className="flex gap-2">
-            <button
-              onClick={handlePlayPause}
-              className="flex-1 py-2 px-4 bg-green-600 hover:bg-green-500 text-white rounded font-medium transition-colors"
-            >
-              {isPlaying ? "Pause" : "Play"}
-            </button>
-            <button
-              onClick={handleStep}
-              className="py-2 px-4 bg-neutral-700 hover:bg-neutral-600 rounded font-medium transition-colors"
-            >
-              Step
-            </button>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleClear}
-              className="flex-1 py-2 px-4 bg-red-900/50 hover:bg-red-800/50 text-red-200 rounded font-medium transition-colors"
-            >
-              Clear
-            </button>
-            <button
-              onClick={handleRandomize}
-              className="flex-1 py-2 px-4 bg-neutral-700 hover:bg-neutral-600 rounded font-medium transition-colors"
-            >
-              Random
-            </button>
-          </div>
-        </div>
-
-        <div className="h-px bg-neutral-800 w-full" />
-
-        {/* Simulation Params */}
-        <div className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-neutral-400">Grid Size</span>
-            <select
-              value={gridSize}
-              onChange={handleGridSizeChange}
-              className="bg-neutral-800 border border-neutral-700 rounded p-2 text-sm"
-            >
-              <option value="256">256 x 256</option>
-              <option value="512">512 x 512</option>
-              <option value="1024">1024 x 1024</option>
-              <option value="2048">2048 x 2048</option>
-            </select>
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-neutral-400">Speed (GPS: {speed})</span>
-            <input
-              type="range"
-              min="1"
-              max="60"
-              value={speed}
-              onChange={(e) => setSpeed(Number(e.target.value))}
-              className="accent-green-500"
-            />
-          </label>
-        </div>
-
-        <div className="h-px bg-neutral-800 w-full" />
-
-        {/* Rules */}
-        <div className="flex flex-col gap-3">
-          <span className="text-sm font-medium text-neutral-300">Rules (B/S)</span>
-          <div className="flex gap-4">
-            <label className="flex flex-col gap-1 flex-1">
-              <span className="text-xs text-neutral-400">Birth</span>
-              <div className="flex items-center">
-                <span className="text-neutral-500 mr-2">B</span>
-                <input
-                  type="text"
-                  value={ruleB}
-                  onChange={(e) => setRuleB(e.target.value)}
-                  className="bg-neutral-800 border border-neutral-700 rounded p-1.5 w-full text-sm font-mono"
-                />
-              </div>
-            </label>
-            <label className="flex flex-col gap-1 flex-1">
-              <span className="text-xs text-neutral-400">Survive</span>
-              <div className="flex items-center">
-                <span className="text-neutral-500 mr-2">S</span>
-                <input
-                  type="text"
-                  value={ruleS}
-                  onChange={(e) => setRuleS(e.target.value)}
-                  className="bg-neutral-800 border border-neutral-700 rounded p-1.5 w-full text-sm font-mono"
-                />
-              </div>
-            </label>
-          </div>
-        </div>
-
-        <div className="h-px bg-neutral-800 w-full" />
-
-        {/* Library & Tools */}
-        <div className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-neutral-400">Pattern Library</span>
-            <select
-              onChange={handleLoadPattern}
-              className="bg-neutral-800 border border-neutral-700 rounded p-2 text-sm"
-              defaultValue="Glider Gun (Gosper)"
-            >
-              <option value="" disabled>Select pattern...</option>
-              {patterns.map((p) => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-neutral-400">Color Theme</span>
-            <select
-              value={theme}
-              onChange={(e) => setTheme(Number(e.target.value))}
-              className="bg-neutral-800 border border-neutral-700 rounded p-2 text-sm"
-            >
-              <option value="0">Classic Green</option>
-              <option value="1">Cyberpunk Neon</option>
-              <option value="2">Minimal White</option>
-            </select>
-          </label>
-
-          <button
-            onClick={() => setDrawingMode(!drawingMode)}
-            className={`py-2 px-4 rounded font-medium transition-colors border ${
-              drawingMode 
-                ? 'bg-blue-600/20 border-blue-500 text-blue-300' 
-                : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:bg-neutral-700'
-            }`}
-          >
-            {drawingMode ? "Stop Drawing" : "Draw Mode"}
-          </button>
-        </div>
+    <SimLayout
+      title="Cellular Automata"
+      subject="cs"
+      difficulty="easy"
+      status={status}
+      controls={controls}
+      explanation={explanation}
+      initiallyPlaying={false}
+      onPlayPause={(playing) => (playing ? sim?.play() : sim?.pause())}
+      onStep={() => sim?.step()}
+      onReset={() => sim?.reset()}
+    >
+      <canvas
+        ref={canvasRef}
+        className={`absolute inset-0 block h-full w-full touch-none ${tool === "pan" ? "cursor-grab" : "cursor-crosshair"}`}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onWheel={onWheel}
+      />
+      <div className="pointer-events-none absolute right-3 top-3 flex gap-4 rounded border border-slate-800 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-400 backdrop-blur">
+        <span>Zoom: {zoom.toFixed(2)}×</span>
+        <span>{tool === "pan" ? "Drag to pan · scroll to zoom" : tool === "draw" ? "Drag to draw cells" : "Drag to erase cells"}</span>
       </div>
-
-      {/* Canvas Area */}
-      <div className="flex-1 relative overflow-hidden bg-black touch-none">
-        <canvas
-          ref={canvasRef}
-          className="absolute inset-0 w-full h-full cursor-crosshair"
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerLeave={handlePointerUp}
-          onWheel={handleWheel}
-        />
-        
-        <div className="absolute top-4 right-4 bg-neutral-900/80 backdrop-blur px-3 py-1.5 rounded text-xs text-neutral-400 border border-neutral-800 flex gap-4 pointer-events-none">
-          <span>Zoom: {zoom.toFixed(2)}x</span>
-          <span>{drawingMode ? "Click to place cells" : "Drag to pan, Scroll to zoom"}</span>
-        </div>
-      </div>
-    </div>
+    </SimLayout>
   );
 }

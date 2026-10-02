@@ -1,231 +1,269 @@
-import { init, surface, effect, compute, storage, frameLoop, pingPongStorage } from 'vgpu';
-import { shaderSource as computeWgsl } from './compute.wgsl';
-import { shaderSource as renderWgsl } from './render.wgsl';
-import { patterns, getPatternBounds } from './patterns';
+import { compute, effect, frameLoop, pingPongStorage } from "vgpu";
+import type { PingPongStorage, StorageBuffer } from "vgpu";
+import { frameDelta } from "@/lib/gpu/runtime";
+import type { SimContext, SimHandle } from "@/lib/gpu/runtime";
+import computeShader from "./compute.wgsl";
+import renderShader from "./render.wgsl";
+import { DEFAULT_PATTERN, patterns, rasterizePattern } from "./patterns";
+import { parseRule } from "./rules";
+import { workgroupsFor } from "./workgroup";
 
-export class CellularAutomataSim {
-  private gpu: any = null;
-  private canvas: HTMLCanvasElement;
-  private targetSurface: any = null;
-  private width: number;
-  private height: number;
-  
-  private ppBuffer: any;
-  
-  private computePass: any;
-  private renderPass: any;
-  private loopHandle: any = null;
-  
-  private ruleBirth: number = 0b000001000; // B3
-  private ruleSurvive: number = 0b000001100; // S23
-  
-  private generation: number = 0;
-  private theme: number = 0;
-  
-  private panX: number = 0;
-  private panY: number = 0;
-  private zoom: number = 1.0;
+export const GRID_SIZES = [256, 512, 1024, 2048] as const;
+export const MIN_ZOOM = 0.25;
+export const MAX_ZOOM = 40;
+/** Cap on generations computed in one frame, so a fast speed on a slow GPU can't stall the page. */
+const MAX_STEPS_PER_FRAME = 8;
 
-  private isPlaying: boolean = false;
-  private stepsPerSecond: number = 10;
-  private lastStepTime: number = 0;
+export interface CellularAutomataParams {
+  birth: string;
+  survive: string;
+  /** Generations per second. */
+  speed: number;
+  theme: number;
+}
 
-  private hostData: Uint32Array;
-  
-  public onGenerationChange?: (gen: number) => void;
+export interface CellularAutomataOptions {
+  gridSize?: number;
+  onGeneration?: (generation: number) => void;
+  onZoom?: (zoom: number) => void;
+}
 
-  constructor(canvas: HTMLCanvasElement, width: number = 256, height: number = 256) {
-    this.canvas = canvas;
-    this.width = width;
-    this.height = height;
-    this.hostData = new Uint32Array(width * height);
-  }
+export interface CellularAutomataHandle extends SimHandle {
+  setParams(params: Partial<CellularAutomataParams>): void;
+  setGridSize(size: number): void;
+  play(): void;
+  pause(): void;
+  step(): void;
+  /** Re-applies the last initialisation (pattern, random fill or clear). */
+  reset(): void;
+  clear(): void;
+  randomize(): void;
+  loadPattern(name: string): void;
+  panBy(dxCss: number, dyCss: number): void;
+  zoomAt(factor: number, xCss: number, yCss: number): void;
+  /** Writes cells along a stroke; call `endStroke` when the pointer is released. */
+  paint(xCss: number, yCss: number, alive: boolean): void;
+  endStroke(): void;
+}
 
-  public async initialize() {
-    this.gpu = await init();
-    this.gpu.onError((err: any) => {
-      console.error(">>> CS GPU ERROR:", err.message, err.cause, err.detail, err);
+type InitialState = { kind: "pattern"; name: string } | { kind: "random" } | { kind: "clear" };
+
+/** The public StorageBuffer type hides the byte-offset overload that the runtime supports. */
+type OffsetWritable = StorageBuffer & { write(data: BufferSource, offset?: number): void };
+type Destroyable = { destroy?: () => void };
+
+export function createCellularAutomata(
+  { gpu, canvas, surface, clock }: SimContext,
+  { gridSize = 256, onGeneration, onZoom }: CellularAutomataOptions = {},
+): CellularAutomataHandle {
+  const computePass = compute(gpu, computeShader);
+  const renderPass = effect(gpu, renderShader);
+
+  let size = gridSize;
+  let cells: PingPongStorage = pingPongStorage(gpu, size * size * 4);
+  let params: CellularAutomataParams = { birth: "3", survive: "23", speed: 10, theme: 0 };
+  let ruleBirth = parseRule(params.birth);
+  let ruleSurvive = parseRule(params.survive);
+
+  let playing = false;
+  let generation = 0;
+  let generationDirty = true;
+  let stepDebt = 0; // seconds accumulated towards the next generation
+  let initial: InitialState = { kind: "pattern", name: DEFAULT_PATTERN };
+
+  // View: `center` is the grid coordinate at the middle of the canvas; `zoom` multiplies the
+  // fit-to-canvas scale.
+  let centerX = size / 2;
+  let centerY = size / 2;
+  let zoom = 1;
+  let lastCell: [number, number] | null = null;
+
+  const fitScale = () => Math.min(surface.size[0] / size, surface.size[1] / size);
+  const cellPx = () => fitScale() * zoom;
+  const resetView = () => {
+    centerX = size / 2;
+    centerY = size / 2;
+    zoom = 1;
+    onZoom?.(zoom);
+  };
+
+  /** Canvas CSS pixels -> device pixels. */
+  const toDevice = (xCss: number, yCss: number): [number, number] => {
+    const rect = canvas.getBoundingClientRect();
+    return [(xCss * surface.size[0]) / rect.width, (yCss * surface.size[1]) / rect.height];
+  };
+
+  const toGrid = (xCss: number, yCss: number): [number, number] => {
+    const [dx, dy] = toDevice(xCss, yCss);
+    const scale = cellPx();
+    return [centerX + (dx - surface.size[0] / 2) / scale, centerY + (dy - surface.size[1] / 2) / scale];
+  };
+
+  const setGeneration = (value: number) => {
+    generation = value;
+    generationDirty = true;
+  };
+
+  const upload = (data: Uint32Array<ArrayBuffer>) => {
+    cells.read.write(data);
+    setGeneration(0);
+    stepDebt = 0;
+  };
+
+  const applyInitial = () => {
+    switch (initial.kind) {
+      case "pattern": {
+        const name = initial.name;
+        const pattern = patterns.find((p) => p.name === name);
+        upload(pattern ? rasterizePattern(pattern, size, size) : new Uint32Array(size * size));
+        break;
+      }
+      case "random": {
+        const data = new Uint32Array(size * size);
+        for (let i = 0; i < data.length; i++) data[i] = Math.random() > 0.8 ? 1 : 0;
+        upload(data);
+        break;
+      }
+      case "clear":
+        upload(new Uint32Array(size * size));
+        break;
+    }
+  };
+
+  const runStep = () => {
+    computePass.set({
+      cellsIn: cells.read,
+      cellsOut: cells.write,
+      params: { width: size, height: size, rule_birth: ruleBirth, rule_survive: ruleSurvive },
     });
+    computePass.dispatch(workgroupsFor(size), workgroupsFor(size), 1);
+    cells.swap();
+    setGeneration(generation + 1);
+  };
 
-    this.targetSurface = surface(this.gpu, this.canvas, { dpr: window.devicePixelRatio });
-    
-    const bufferSize = this.width * this.height * 4;
-    this.ppBuffer = pingPongStorage(this.gpu, bufferSize);
+  const writeCell = (x: number, y: number, alive: boolean) => {
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    (cells.read as OffsetWritable).write(new Uint32Array([alive ? 1 : 0]), (y * size + x) * 4);
+  };
 
-    this.computePass = compute(this.gpu, computeWgsl);
-    this.renderPass = effect(this.gpu, renderWgsl);
+  applyInitial();
 
-    this.loadPattern("Glider Gun (Gosper)");
-
-    this.loopHandle = frameLoop(this.gpu, (f) => {
-      const now = performance.now();
-      const interval = 1000 / this.stepsPerSecond;
-
-      if (this.isPlaying && (now - this.lastStepTime > interval)) {
-        this.lastStepTime = now;
-        this.runComputeStep();
+  const loop = frameLoop(gpu, (frame) => {
+    const dt = frameDelta(clock);
+    if (playing) {
+      stepDebt += dt;
+      const interval = 1 / params.speed;
+      let steps = 0;
+      while (stepDebt >= interval && steps < MAX_STEPS_PER_FRAME) {
+        runStep();
+        stepDebt -= interval;
+        steps++;
       }
-
-      this.renderPass.set({
-        cells: this.ppBuffer.read,
-        params: {
-          gridWidth: this.width,
-          gridHeight: this.height,
-          canvasWidth: this.canvas.width,
-          canvasHeight: this.canvas.height,
-          panX: this.panX,
-          panY: this.panY,
-          zoom: this.zoom,
-          theme: this.theme
-        }
-      });
-
-      f.pass(this.targetSurface, this.renderPass);
-    });
-  }
-
-  public destroy() {
-    this.isPlaying = false;
-    if (this.loopHandle) {
-      this.loopHandle.stop();
+      if (steps === MAX_STEPS_PER_FRAME) stepDebt = 0;
     }
-    if (this.gpu) {
-      this.gpu.dispose();
+
+    if (generationDirty) {
+      generationDirty = false;
+      onGeneration?.(generation);
     }
-  }
 
-  private parseRule(ruleStr: string): number {
-    let mask = 0;
-    for (let i = 0; i < ruleStr.length; i++) {
-      const d = parseInt(ruleStr[i]);
-      if (!isNaN(d) && d >= 0 && d <= 8) {
-        mask |= (1 << d);
-      }
-    }
-    return mask;
-  }
-
-  public setRules(birth: string, survive: string) {
-    this.ruleBirth = this.parseRule(birth);
-    this.ruleSurvive = this.parseRule(survive);
-  }
-
-  public setTheme(theme: number) {
-    this.theme = theme;
-  }
-  
-  public setSpeed(speed: number) {
-    this.stepsPerSecond = speed;
-  }
-
-  public setGridSize(size: number) {
-    this.width = size;
-    this.height = size;
-    const bufferSize = this.width * this.height * 4;
-    
-    if (this.gpu) {
-      this.ppBuffer = pingPongStorage(this.gpu, bufferSize);
-    }
-    
-    this.hostData = new Uint32Array(this.width * this.height);
-    this.clear();
-  }
-
-  public clear() {
-    this.hostData.fill(0);
-    if (this.ppBuffer) this.ppBuffer.read.write(this.hostData);
-    this.generation = 0;
-    if (this.onGenerationChange) this.onGenerationChange(0);
-  }
-
-  public randomize() {
-    for (let i = 0; i < this.hostData.length; i++) {
-      this.hostData[i] = Math.random() > 0.8 ? 1 : 0;
-    }
-    if (this.ppBuffer) this.ppBuffer.read.write(this.hostData);
-    this.generation = 0;
-    if (this.onGenerationChange) this.onGenerationChange(0);
-  }
-
-  public loadPattern(name: string) {
-    const pattern = patterns.find(p => p.name === name);
-    if (!pattern) return;
-
-    this.hostData.fill(0);
-    
-    const bounds = getPatternBounds(pattern);
-    const startX = Math.floor(this.width / 2 - bounds.width / 2);
-    const startY = Math.floor(this.height / 2 - bounds.height / 2);
-
-    for (const [px, py] of pattern.points) {
-      const x = startX + px;
-      const y = startY + py;
-      if (x >= 0 && x < this.width && y >= 0 && y < this.height) {
-        this.hostData[y * this.width + x] = 1;
-      }
-    }
-    if (this.ppBuffer) this.ppBuffer.read.write(this.hostData);
-    this.generation = 0;
-    if (this.onGenerationChange) this.onGenerationChange(0);
-  }
-
-  public toggleCell(canvasX: number, canvasY: number) {
-    const rect = this.canvas.getBoundingClientRect();
-    const u = canvasX / rect.width;
-    const v = canvasY / rect.height;
-
-    const gridX_f = (u - this.panX) * (this.width / this.zoom);
-    const gridY_f = (v - this.panY) * (this.height / this.zoom);
-
-    const x = Math.floor(gridX_f);
-    const y = Math.floor(gridY_f);
-
-    if (x >= 0 && x < this.width && y >= 0 && y < this.height) {
-      const offset = (y * this.width + x) * 4;
-      const val = new Uint32Array([1]);
-      if (this.ppBuffer) this.ppBuffer.read.write(val, offset);
-    }
-  }
-
-  public play() {
-    this.isPlaying = true;
-  }
-
-  public pause() {
-    this.isPlaying = false;
-  }
-
-  public step() {
-    this.runComputeStep();
-  }
-
-  public setPanZoom(panX: number, panY: number, zoom: number) {
-    this.panX = panX;
-    this.panY = panY;
-    this.zoom = zoom;
-  }
-
-  private runComputeStep() {
-    if (!this.gpu || !this.computePass) return;
-
-    this.computePass.set({
-      cellsIn: this.ppBuffer.read,
-      cellsOut: this.ppBuffer.write,
+    renderPass.set({
+      cells: cells.read,
       params: {
-        width: this.width,
-        height: this.height,
-        rule_birth: this.ruleBirth,
-        rule_survive: this.ruleSurvive
-      }
+        gridWidth: size,
+        gridHeight: size,
+        resolution: surface.size,
+        center: [centerX, centerY],
+        cellPx: cellPx(),
+        theme: params.theme,
+      },
     });
+    frame.pass(surface, renderPass);
+  });
 
-    const workgroupsX = Math.ceil(this.width / 16);
-    const workgroupsY = Math.ceil(this.height / 16);
-    this.computePass.dispatch(workgroupsX, workgroupsY, 1);
-
-    this.ppBuffer.swap();
-
-    this.generation++;
-    if (this.onGenerationChange) this.onGenerationChange(this.generation);
-  }
+  return {
+    setParams(next) {
+      params = { ...params, ...next };
+      ruleBirth = parseRule(params.birth);
+      ruleSurvive = parseRule(params.survive);
+    },
+    setGridSize(next) {
+      if (next === size) return;
+      const old = cells;
+      size = next;
+      cells = pingPongStorage(gpu, size * size * 4);
+      // vgpu frees buffers on gpu.dispose(); release the old pair early so resizing doesn't accumulate.
+      (old.read as Destroyable).destroy?.();
+      (old.write as Destroyable).destroy?.();
+      resetView();
+      applyInitial();
+    },
+    play: () => {
+      playing = true;
+    },
+    pause: () => {
+      playing = false;
+    },
+    step: runStep,
+    reset: applyInitial,
+    clear() {
+      initial = { kind: "clear" };
+      applyInitial();
+    },
+    randomize() {
+      initial = { kind: "random" };
+      applyInitial();
+    },
+    loadPattern(name) {
+      if (!patterns.some((p) => p.name === name)) return;
+      initial = { kind: "pattern", name };
+      applyInitial();
+    },
+    panBy(dxCss, dyCss) {
+      const [dx, dy] = toDevice(dxCss, dyCss);
+      const scale = cellPx();
+      centerX -= dx / scale;
+      centerY -= dy / scale;
+    },
+    zoomAt(factor, xCss, yCss) {
+      const [gx, gy] = toGrid(xCss, yCss);
+      zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+      // Keep the grid point under the cursor fixed on screen.
+      const [dx, dy] = toDevice(xCss, yCss);
+      const scale = cellPx();
+      centerX = gx - (dx - surface.size[0] / 2) / scale;
+      centerY = gy - (dy - surface.size[1] / 2) / scale;
+      onZoom?.(zoom);
+    },
+    paint(xCss, yCss, alive) {
+      const [gx, gy] = toGrid(xCss, yCss);
+      const x = Math.floor(gx);
+      const y = Math.floor(gy);
+      // Walk a straight line from the previous cell so fast strokes leave no gaps.
+      let [x0, y0] = lastCell ?? [x, y];
+      const dx = Math.abs(x - x0);
+      const dy = -Math.abs(y - y0);
+      const sx = x0 < x ? 1 : -1;
+      const sy = y0 < y ? 1 : -1;
+      let err = dx + dy;
+      for (;;) {
+        writeCell(x0, y0, alive);
+        if (x0 === x && y0 === y) break;
+        const e2 = 2 * err;
+        if (e2 >= dy) {
+          err += dy;
+          x0 += sx;
+        }
+        if (e2 <= dx) {
+          err += dx;
+          y0 += sy;
+        }
+      }
+      lastCell = [x, y];
+    },
+    endStroke() {
+      lastCell = null;
+    },
+    dispose: () => loop.stop(),
+  };
 }
