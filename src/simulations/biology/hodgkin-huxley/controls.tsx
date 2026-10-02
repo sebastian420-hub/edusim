@@ -22,7 +22,7 @@ const LEGEND = [
 ];
 
 export default function HHControls() {
-  const { canvasRef, status, sim } = useGpuSim(createHodgkinHuxley);
+  const { canvasRef, status, sim, quality } = useGpuSim(createHodgkinHuxley);
   const [params, setParams] = useState<HHSimParams>(DEFAULT_SIM_PARAMS);
 
   useEffect(() => {
@@ -95,6 +95,7 @@ export default function HHControls() {
       subject="biology"
       difficulty="medium"
       status={status}
+      quality={quality}
       controls={controls}
       explanation={explanation}
       onPlayPause={(playing) => (playing ? sim?.play() : sim?.pause())}

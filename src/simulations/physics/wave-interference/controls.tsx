@@ -52,7 +52,7 @@ const pillClass = (active: boolean) =>
   `rounded px-2 py-1.5 text-sm transition-colors ${active ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`;
 
 export default function WaveInterferenceControls() {
-  const { canvasRef, status, sim } = useGpuSim(createWaveSim);
+  const { canvasRef, status, sim, quality } = useGpuSim(createWaveSim);
   const [params, setParams, resetParams] = usePersistedParams(SIM_ID, SCHEMA, DEFAULTS);
   const [tool, setTool] = useState<MeasureTool>("none");
   const readouts = useMemo(() => detectorReadouts(params), [params]);
@@ -164,6 +164,7 @@ export default function WaveInterferenceControls() {
       subject="physics"
       difficulty="easy"
       status={status}
+      quality={quality}
       controls={controls}
       explanation={explanation}
       challenges={

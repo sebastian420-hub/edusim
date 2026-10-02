@@ -1,5 +1,4 @@
-import { compute, effect, frameLoop, storage } from "vgpu";
-import { frameDelta } from "@/lib/gpu/runtime";
+import { compute, effect, storage } from "vgpu";
 import type { SimContext, SimHandle } from "@/lib/gpu/runtime";
 import { DEFAULT_PARAMS, DT_MS, HISTORY_SAMPLES, REST_STATE, SAMPLE_EVERY } from "./hh";
 import type { HHParams } from "./hh";
@@ -25,7 +24,7 @@ export interface HHHandle extends SimHandle {
 
 const initialState = () => new Float32Array([REST_STATE.V, REST_STATE.m, REST_STATE.h, REST_STATE.n]);
 
-export function createHodgkinHuxley({ gpu, surface, clock }: SimContext): HHHandle {
+export function createHodgkinHuxley({ gpu, surface, loop: frameLoop }: SimContext): HHHandle {
   const stateBuffer = storage(gpu, 16);
   const historyBuffer = storage(gpu, HISTORY_SAMPLES * 16);
   const metaBuffer = storage(gpu, 16);
@@ -49,9 +48,9 @@ export function createHodgkinHuxley({ gpu, surface, clock }: SimContext): HHHand
   };
   resetBuffers();
 
-  const loop = frameLoop(gpu, (frame) => {
+  const loop = frameLoop((frame, dt) => {
     if (playing) {
-      stepDebt += (params.timeScale * frameDelta(clock)) / DT_MS;
+      stepDebt += (params.timeScale * dt) / DT_MS;
       const whole = Math.floor(stepDebt);
       stepDebt -= whole;
       const steps = Math.min(whole, MAX_STEPS_PER_FRAME);

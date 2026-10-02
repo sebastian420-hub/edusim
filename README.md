@@ -85,6 +85,14 @@ src/
 - **Measurement:** analytic sims get a TypeScript twin of the shader (`wave.ts`) used for graphs and readouts,
   and a GPU test proving the two agree.
 
+## Adaptive quality
+
+Simulations run through a paced render loop (`ctx.loop`): it skips ticks while the GPU is still busy, so a slow
+device never builds a backlog (Pause/sliders stay responsive), and a governor (`lib/gpu/pacing.ts`) lowers the
+canvas resolution — down to 35% — when frames cost too much, raising it again only when the predicted cost fits.
+A badge shows when resolution is reduced. To pin full resolution (projector, screenshots), run
+`localStorage.setItem("edusim:quality", "full")` in the browser console.
+
 ## Adding a simulation
 
 1. Create `src/simulations/<subject>/<id>/` with `*.wgsl`, `sim.ts` (a `SimFactory` that returns a handle with

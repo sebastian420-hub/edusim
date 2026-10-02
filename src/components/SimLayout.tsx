@@ -21,6 +21,8 @@ interface SimLayoutProps {
   challenges?: ReactNode;
   /** Enables "Save image" for this canvas. */
   canvasRef?: RefObject<HTMLCanvasElement | null>;
+  /** Render scale chosen by the adaptive-quality governor (1 = full); a badge explains when it is lower. */
+  quality?: number;
   /** Enables the "Defaults" button. */
   onResetDefaults?: () => void;
   /** Start in the playing state (default true). */
@@ -57,6 +59,7 @@ export function SimLayout({
   explanation,
   challenges,
   canvasRef,
+  quality = 1,
   onResetDefaults,
   initiallyPlaying = true,
   onPlayPause,
@@ -218,6 +221,15 @@ export function SimLayout({
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <main className="relative min-h-[45vh] flex-1 bg-black md:min-h-0">
           {children}
+          {quality < 1 && status.state === "ready" && (
+            <div
+              data-testid="quality-badge"
+              title="EduSim lowered the drawing resolution to keep the animation smooth on this device"
+              className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/60 px-2 py-1 text-[11px] text-amber-200"
+            >
+              Resolution {Math.round(quality * 100)}% — reduced to stay smooth
+            </div>
+          )}
           <GpuStatusOverlay status={status} />
         </main>
 

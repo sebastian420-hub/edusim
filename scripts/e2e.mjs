@@ -34,7 +34,7 @@ const results = [];
 const IGNORED_ERRORS = [/WebGPU is experimental/i, /Download the React DevTools/i];
 
 /** Runs `body` in a fresh page; fails the test on any console error or uncaught exception. */
-async function test(name, body, { context = {}, initScript, allowErrors = [] } = {}) {
+async function test(name, body, { context = {}, initScript, allowErrors = [], adaptive = false } = {}) {
   const ctx = await browser.newContext({
     viewport: { width: 1360, height: 860 },
     acceptDownloads: true,
@@ -49,6 +49,8 @@ async function test(name, body, { context = {}, initScript, allowErrors = [] } =
     }
   });
   page.on("pageerror", (e) => errors.push(`uncaught: ${e.message}`));
+  // Pixel-exact checks need a stable resolution, so pin full quality unless the scenario is about adaptivity.
+  if (!adaptive) await page.addInitScript(() => localStorage.setItem("edusim:quality", "full"));
   if (initScript) await page.addInitScript(initScript);
   const started = Date.now();
   let failure;
@@ -86,7 +88,33 @@ async function open(page, route) {
 }
 
 const canvasPixels = (page) => page.locator("canvas").screenshot();
-const sameImage = (a, b) => Buffer.compare(a, b) === 0;
+/**
+ * True when two PNGs show the same picture. Byte equality is too strict for a software renderer, whose
+ * output can differ by one colour level between presented buffers, so small differences are tolerated.
+ */
+async function same(page, a, b, tolerance = 3) {
+  if (Buffer.compare(a, b) === 0) return true;
+  return page.evaluate(
+    async ([x, y, tol]) => {
+      const load = async (b64) => {
+        const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+        const c = new OffscreenCanvas(img.width, img.height);
+        const g = c.getContext("2d");
+        g.drawImage(img, 0, 0);
+        return g.getImageData(0, 0, img.width, img.height);
+      };
+      const A = await load(x);
+      const B = await load(y);
+      if (A.width !== B.width || A.height !== B.height) return false;
+      for (let i = 0; i < A.data.length; i += 4) {
+        const d = Math.abs(A.data[i] - B.data[i]) + Math.abs(A.data[i + 1] - B.data[i + 1]) + Math.abs(A.data[i + 2] - B.data[i + 2]);
+        if (d > tol) return false;
+      }
+      return true;
+    },
+    [a.toString("base64"), b.toString("base64"), tolerance],
+  );
+}
 
 /**
  * Waits until the canvas stops changing and returns that image. On a software renderer frames take
@@ -99,7 +127,7 @@ async function settle(page, timeout = 12_000) {
   while (Date.now() < end) {
     await page.waitForTimeout(300);
     const cur = await canvasPixels(page);
-    if (sameImage(prev, cur)) return cur;
+    if (await same(page, prev, cur)) return cur;
     prev = cur;
   }
   throw new Error("canvas never settled (still animating?)");
@@ -109,7 +137,7 @@ async function settle(page, timeout = 12_000) {
 async function waitForChange(page, reference, message, timeout = 10_000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
-    if (!sameImage(reference, await canvasPixels(page))) return;
+    if (!await same(page, reference, await canvasPixels(page))) return;
     await page.waitForTimeout(250);
   }
   throw new Error(message);
@@ -224,10 +252,50 @@ await test("wave: pause freezes the animation, play resumes it", async (page) =>
   // The wave shader is heavy for a CPU-emulated GPU: frames queued before the pause drain slowly.
   const frozen = await settle(page, 60_000);
   await page.waitForTimeout(800);
-  assert(sameImage(frozen, await canvasPixels(page)), "canvas changed while paused");
+  assert(await same(page, frozen, await canvasPixels(page)), "canvas changed while paused");
   await page.getByRole("button", { name: "Play" }).click();
   await waitForChange(page, frozen, "canvas static after Play", 20_000);
 }, { context: { viewport: { width: 900, height: 560 } } });
+
+await test("frame pacing: at full resolution on a very slow GPU, Pause still takes effect within seconds", async (page) => {
+  // ~700 ms per frame on this software renderer. Without a bounded frame queue the backlog took >12 s to drain.
+  await open(page, "/physics/wave-interference");
+  await page.getByRole("button", { name: "Pause" }).click();
+  const t0 = Date.now();
+  await settle(page, 20_000);
+  const seconds = (Date.now() - t0) / 1000;
+  assert(seconds < 8, `canvas took ${seconds.toFixed(1)}s to freeze after Pause`);
+  console.log(`      (froze ${seconds.toFixed(1)}s after Pause)`);
+});
+
+await test("adaptive quality: a GPU too slow for full resolution lowers it, converges, and shows a badge", async (page) => {
+  await open(page, "/physics/wave-interference");
+  const width = () => page.evaluate(() => document.querySelector("canvas").width);
+  const initial = await width();
+  await page.waitForSelector("[data-testid=quality-badge]", { timeout: 60_000 });
+  assert(/Resolution \d+%/.test(await text(page, "[data-testid=quality-badge]")), "badge text");
+  // Converges: the resolution stops changing (no oscillation) within a minute.
+  let last = await width();
+  let stableSince = Date.now();
+  const deadline = Date.now() + 60_000;
+  while (Date.now() - stableSince < 10_000) {
+    assert(Date.now() < deadline, "resolution kept changing for 60s (oscillating?)");
+    await page.waitForTimeout(500);
+    const w = await width();
+    if (w !== last) { last = w; stableSince = Date.now(); }
+  }
+  assert(last < initial, `resolution not reduced: ${initial} -> ${last}`);
+  console.log(`      (canvas ${initial}px -> ${last}px wide, then stable)`);
+  await shot(page, "adaptive-quality");
+}, { adaptive: true });
+
+await test("adaptive quality: can be pinned to full resolution (teacher/projector setting)", async (page) => {
+  await open(page, "/physics/wave-interference");
+  const initial = await page.evaluate(() => document.querySelector("canvas").width);
+  await page.waitForTimeout(15_000);
+  assert((await page.evaluate(() => document.querySelector("canvas").width)) === initial, "resolution changed although pinned");
+  assert((await page.locator("[data-testid=quality-badge]").count()) === 0, "badge shown although pinned");
+});
 
 await test("wave: challenge flow (predict → setup → goal → explanation) and persistence", async (page) => {
   await open(page, "/physics/wave-interference");
@@ -271,11 +339,11 @@ await test("hodgkin-huxley: runs, pauses, presets and sliders respond", async (p
   await open(page, "/biology/hodgkin-huxley");
   const a = await canvasPixels(page);
   await page.waitForTimeout(500);
-  assert(!sameImage(a, await canvasPixels(page)), "trace not animating");
+  assert(!await same(page, a, await canvasPixels(page)), "trace not animating");
   await page.getByRole("button", { name: "Pause" }).click();
   const p1 = await settle(page);
   await page.waitForTimeout(600);
-  assert(sameImage(p1, await canvasPixels(page)), "trace moved while paused");
+  assert(await same(page, p1, await canvasPixels(page)), "trace moved while paused");
   await page.getByRole("button", { name: "Play" }).click();
   for (const preset of ["TTX Block", "TEA Block", "Anode Break", "Normal AP"]) {
     await page.getByRole("button", { name: preset }).click();
@@ -348,12 +416,12 @@ await test("cellular-automata: draw and erase strokes, wheel zoom, pan, grid siz
   };
   await page.getByRole("button", { name: "Draw", exact: true }).click();
   await stroke();
-  assert(!sameImage(empty, await settle(page)), "drawing changed nothing");
+  assert(!await same(page, empty, await settle(page)), "drawing changed nothing");
   await page.getByRole("button", { name: "Erase", exact: true }).click();
   await stroke();
   // Back to the Pan tool first: the on-canvas caption changes with the tool and is part of the image.
   await page.getByRole("button", { name: "Pan", exact: true }).click();
-  assert(sameImage(empty, await settle(page)), "erasing the same stroke did not restore the empty grid");
+  assert(await same(page, empty, await settle(page)), "erasing the same stroke did not restore the empty grid");
 
   await page.mouse.move(box.x + 400, box.y + 300);
   await page.mouse.wheel(0, -800);
@@ -378,7 +446,7 @@ await test("cellular-automata: Gosper gun is alive after 100 generations (rule c
   const before = await canvasPixels(page);
   await page.getByRole("button", { name: "Play" }).click();
   await page.waitForFunction(() => /Generation\s*\n?\s*(\d+)/.test(document.body.innerText) && Number(document.body.innerText.match(/Generation\s*\n?\s*(\d+)/)[1]) >= 100, null, { timeout: 30_000 });
-  assert(!sameImage(before, await canvasPixels(page)), "pattern did not evolve");
+  assert(!await same(page, before, await canvasPixels(page)), "pattern did not evolve");
 });
 
 // ───────────────────────────── resilience ─────────────────────────────
