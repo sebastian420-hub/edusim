@@ -7,6 +7,8 @@ export interface SimMeta {
   subject: Subject;
   difficulty: Difficulty;
   description: string;
+  /** One short line for the home page plate. */
+  tagline?: string;
   icon: string;
   path: string;
   implemented: boolean;
@@ -21,7 +23,7 @@ export const SUBJECTS: Record<Subject, { label: string; icon: string }> = {
 
 export const SIMULATIONS: SimMeta[] = [
   // Physics
-  { id: "wave-interference", title: "Wave Interference & Diffraction", subject: "physics", difficulty: "easy", description: "Explore how waves combine, cancel, and create patterns through slits.", icon: "🌊", path: "/physics/wave-interference", implemented: true },
+  { id: "wave-interference", title: "Wave Interference & Diffraction", subject: "physics", difficulty: "easy", description: "Explore how waves combine, cancel, and create patterns through slits.", tagline: "Slits, fringes and the λL/d rule — measured live.", icon: "🌊", path: "/physics/wave-interference", implemented: true },
   { id: "n-body", title: "N-Body Orbital Mechanics", subject: "physics", difficulty: "medium", description: "Simulate gravitational systems with thousands of particles.", icon: "🪐", path: "/physics/n-body", implemented: false },
   { id: "fluid-dynamics", title: "Fluid Dynamics", subject: "physics", difficulty: "hard", description: "Interactive Navier-Stokes fluid simulation.", icon: "🌊", path: "/physics/fluid-dynamics", implemented: false },
   { id: "quantum-wave", title: "Quantum Wave Function", subject: "physics", difficulty: "medium", description: "Visualize quantum tunneling and wave-particle duality.", icon: "🔮", path: "/physics/quantum-wave", implemented: false },
@@ -33,14 +35,14 @@ export const SIMULATIONS: SimMeta[] = [
   { id: "titration", title: "Acid/Base Titration", subject: "chemistry", difficulty: "medium", description: "Real-time titration with microscopic ion visualization.", icon: "🧫", path: "/chemistry/titration", implemented: false },
   { id: "crystal-lattice", title: "Crystal Lattice Structures", subject: "chemistry", difficulty: "easy", description: "3D Bravais lattices with Miller plane cutting.", icon: "💎", path: "/chemistry/crystal-lattice", implemented: false },
   // CS
-  { id: "cellular-automata", title: "Cellular Automata", subject: "cs", difficulty: "easy", description: "Game of Life and custom rules on massive GPU grids.", icon: "🔥", path: "/cs/cellular-automata", implemented: true },
+  { id: "cellular-automata", title: "Cellular Automata", subject: "cs", difficulty: "easy", description: "Game of Life and custom rules on massive GPU grids.", tagline: "Life, death and gliders on a grid of millions.", icon: "🔥", path: "/cs/cellular-automata", implemented: true },
   { id: "sorting-visualizer", title: "Sorting Algorithm Visualizer", subject: "cs", difficulty: "medium", description: "Compare sorting algorithms from bubble sort to GPU bitonic sort.", icon: "📊", path: "/cs/sorting-visualizer", implemented: false },
   { id: "graph-traversal", title: "Graph Traversal", subject: "cs", difficulty: "hard", description: "BFS, DFS, Dijkstra, A* with force-directed layouts.", icon: "🕸️", path: "/cs/graph-traversal", implemented: false },
   { id: "neural-net-viz", title: "Neural Network Decision Boundary", subject: "cs", difficulty: "hard", description: "Train a neural network on GPU and watch the decision boundary evolve.", icon: "🧠", path: "/cs/neural-net-viz", implemented: false },
   { id: "pathfinding", title: "Pathfinding Visualization", subject: "cs", difficulty: "medium", description: "A*, Dijkstra with heuristic potential field visualization.", icon: "🗺️", path: "/cs/pathfinding", implemented: false },
   { id: "bst", title: "Binary Search Tree", subject: "cs", difficulty: "easy", description: "BST, AVL, and Red-Black tree operations with animations.", icon: "🌳", path: "/cs/bst", implemented: false },
   // Biology
-  { id: "hodgkin-huxley", title: "Hodgkin-Huxley Neuron", subject: "biology", difficulty: "medium", description: "Simulate ion channel dynamics and action potential generation.", icon: "⚡", path: "/biology/hodgkin-huxley", implemented: true },
+  { id: "hodgkin-huxley", title: "Hodgkin-Huxley Neuron", subject: "biology", difficulty: "medium", description: "Simulate ion channel dynamics and action potential generation.", tagline: "Ion channels firing an action potential, step by step.", icon: "⚡", path: "/biology/hodgkin-huxley", implemented: true },
   { id: "axon-propagation", title: "Axon Action Potential Propagation", subject: "biology", difficulty: "medium", description: "Watch action potentials propagate along myelinated and unmyelinated axons.", icon: "🔌", path: "/biology/axon-propagation", implemented: false },
   { id: "synaptic-transmission", title: "Synaptic Transmission", subject: "biology", difficulty: "hard", description: "Neurotransmitter release, diffusion, and receptor binding.", icon: "🔬", path: "/biology/synaptic-transmission", implemented: false },
   { id: "neural-net-learning", title: "Neural Network Learning", subject: "biology", difficulty: "hard", description: "Biological perspective on neural network training and plasticity.", icon: "🤖", path: "/biology/neural-net-learning", implemented: false },
@@ -58,4 +60,14 @@ export function simulationsFor(subject: Subject): SimMeta[] {
 
 export function findSimulation(subject: string, id: string): SimMeta | undefined {
   return SIMULATIONS.find((s) => s.subject === subject && s.id === id);
+}
+
+export const SUBJECT_ORDER = Object.keys(SUBJECTS) as Subject[];
+
+/** Subject accent colour as a CSS value (defined once, in globals.css). */
+export const accentOf = (subject: Subject) => `var(--acc-${subject})`;
+
+/** Simulations not built yet, grouped by subject in display order (empty subjects omitted). */
+export function plannedBySubject(): { subject: Subject; sims: SimMeta[] }[] {
+  return SUBJECT_ORDER.map((subject) => ({ subject, sims: SIMULATIONS.filter((s) => s.subject === subject && !s.implemented) })).filter((g) => g.sims.length > 0);
 }

@@ -1,60 +1,56 @@
-import { SimCard } from "@/components/SimCard";
-import { SUBJECTS, simulationsFor } from "@/lib/subjects";
-import type { Subject } from "@/lib/subjects";
-
-const SUBJECT_KEYS = Object.keys(SUBJECTS) as Subject[];
+import { Footer } from "@/components/home/Footer";
+import { Masthead } from "@/components/home/Masthead";
+import { PlannedIndex } from "@/components/home/PlannedIndex";
+import { Plate } from "@/components/home/Plate";
+import { implementedSimulations, SIMULATIONS } from "@/lib/subjects";
 
 export default function Home() {
+  const live = implementedSimulations();
+  const planned = SIMULATIONS.length - live.length;
+
   return (
-    <div className="min-h-screen bg-slate-950 font-sans text-slate-100 selection:bg-blue-500/30">
-      <section className="relative mx-auto flex max-w-5xl flex-col items-center px-6 py-24 text-center md:py-32">
-        <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-900/20 via-slate-950 to-slate-950" />
-        <h1 className="mb-6 bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-5xl font-extrabold tracking-tight text-transparent md:text-7xl">
-          EduSim
-        </h1>
-        <p className="mb-12 max-w-2xl text-xl font-light text-slate-400 md:text-2xl">
-          GPU-Powered Interactive Science Simulations
-        </p>
+    <div className="min-h-dvh bg-[radial-gradient(900px_420px_at_78%_-8%,rgb(94_234_212/0.07),transparent_70%),radial-gradient(700px_380px_at_8%_0,rgb(110_168_254/0.06),transparent_70%)]">
+      <div className="mx-auto max-w-[1240px] px-5 sm:px-10">
+        <Masthead live={live.length} planned={planned} />
 
-        <nav aria-label="Subjects" className="grid w-full grid-cols-2 gap-4 md:grid-cols-4">
-          {SUBJECT_KEYS.map((key) => {
-            const meta = SUBJECTS[key];
-            const sims = simulationsFor(key);
-            const available = sims.filter((s) => s.implemented).length;
-            return (
-              <a
-                key={key}
-                href={`#${key}`}
-                className="flex flex-col items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/50 p-6 outline-none transition-colors hover:bg-slate-800/50 focus-visible:ring-2 focus-visible:ring-blue-500"
-              >
-                <span className="text-4xl" aria-hidden>
-                  {meta.icon}
-                </span>
-                <h2 className="font-semibold">{meta.label}</h2>
-                <span className="text-xs text-slate-500">
-                  {available} of {sims.length} available
-                </span>
-              </a>
-            );
-          })}
-        </nav>
-      </section>
-
-      <main className="mx-auto max-w-7xl space-y-16 px-6 pb-24">
-        {SUBJECT_KEYS.map((key) => (
-          <section key={key} id={key} className="scroll-mt-8">
-            <h2 className="mb-8 flex items-center gap-3 text-2xl font-bold">
-              <span className="h-1 w-8 rounded-full bg-blue-500" />
-              {SUBJECTS[key].label}
-            </h2>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {simulationsFor(key).map((sim) => (
-                <SimCard key={sim.id} sim={sim} />
-              ))}
+        <main>
+          <section className="grid gap-6 py-7 lg:grid-cols-[minmax(0,4fr)_minmax(0,8fr)] lg:gap-12 lg:pt-11 lg:pb-10">
+            <div className="rise" style={{ "--i": 0 } as React.CSSProperties}>
+              <p className="mb-5 font-mono text-label tracking-[0.14em] text-live uppercase">Interactive · GPU-computed</p>
+              <h1 className="text-display font-medium text-balance">
+                Science you can <span className="text-mut">reach into.</span>
+              </h1>
+              <p className="mt-5 max-w-[34ch] text-[15px] leading-normal text-mut">
+                Live models of waves, neurons and cellular life, computed on your graphics card. Change a parameter. Watch the physics answer.
+              </p>
+              <dl className="mt-7 hidden border-t border-hair lg:block">
+                {[
+                  ["Engine", "WebGPU"],
+                  ["Install", "none — runs in the browser"],
+                  ["Works offline", "yes (static build)"],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex justify-between border-b border-hair py-[9px] font-mono text-[11.5px] leading-none text-dim">
+                    <dt>{k}</dt>
+                    <dd className="text-ink">{v}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
+
+            <ul className="-mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:none] sm:-mx-10 sm:px-10 lg:mx-0 lg:grid lg:grid-cols-3 lg:gap-4 lg:overflow-visible lg:px-0 lg:pb-0">
+              {live.map((sim, i) => (
+                <li key={sim.id} className="w-[min(70vw,300px)] shrink-0 snap-start lg:w-auto">
+                  <Plate sim={sim} number={i + 1} index={i} />
+                </li>
+              ))}
+            </ul>
           </section>
-        ))}
-      </main>
+
+          <PlannedIndex />
+        </main>
+
+        <Footer />
+      </div>
     </div>
   );
 }

@@ -1,20 +1,85 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens. One neutral ramp (ink on near-black), one "live" accent, and a muted accent per
+ * subject — the artwork supplies the rest of the colour. Text tokens are contrast-checked in
+ * src/design/tokens.test.ts (>= 4.5:1 on --bg).
+ */
 :root {
-  --background: #020617;
-  --foreground: #f1f5f9;
+  --bg: #0a0c10;
+  --ink: #e9ebef;
+  --mut: #939bab;
+  --dim: #7d8596;
+  --hair: rgb(255 255 255 / 0.09);
+  --hair-strong: rgb(255 255 255 / 0.18);
+  --live: #5eead4;
+
+  --acc-physics: #6ea8fe;
+  --acc-chemistry: #c084fc;
+  --acc-cs: #fbbf24;
+  --acc-biology: #4ade80;
+
   color-scheme: dark;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg: var(--bg);
+  --color-ink: var(--ink);
+  --color-mut: var(--mut);
+  --color-dim: var(--dim);
+  --color-hair: var(--hair);
+  --color-hair-strong: var(--hair-strong);
+  --color-live: var(--live);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Type scale: a display size, and a small tracked mono size for metadata. */
+  --text-display: clamp(2.125rem, 3.6vw, 2.875rem);
+  --text-display--line-height: 1.04;
+  --text-display--letter-spacing: -0.035em;
+  --text-label: 0.6875rem;
+  --text-label--line-height: 1;
+  --text-label--letter-spacing: 0.12em;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+/* Entrance: elements rise and fade in once, staggered by --i. Disabled for reduced motion. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility rise {
+  @media (prefers-reduced-motion: no-preference) {
+    animation: rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: calc(var(--i, 0) * 70ms);
+  }
+}
+
+/* Slow pulse on the "live" dot. */
+@keyframes pulse-ring {
+  70% {
+    box-shadow: 0 0 0 6px rgb(94 234 212 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(94 234 212 / 0);
+  }
+}
+
+@utility live-dot {
+  @media (prefers-reduced-motion: no-preference) {
+    animation: pulse-ring 2.4s infinite;
+  }
 }

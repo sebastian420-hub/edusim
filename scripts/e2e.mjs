@@ -10,7 +10,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright-core";
+import zlib from "node:zlib";
 
 const BASE_URL = (process.env.BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const SHOTS = process.env.SHOTS_DIR; // optional: save screenshots here
@@ -147,19 +149,104 @@ async function waitForChange(page, reference, message, timeout = 10_000) {
 const text = async (page, selector) => (await page.locator(selector).first().textContent()) ?? "";
 
 // ───────────────────────────── home ─────────────────────────────
-await test("home: renders, groups by subject, links to the 3 available sims", async (page) => {
+await test("home: compact editorial layout — plates link to the 3 simulations, planned ones are plain text", async (page) => {
   await page.goto(url("/"));
   assert((await page.title()).includes("EduSim"), `title: ${await page.title()}`);
-  for (const s of ["Physics", "Chemistry", "Computer Science", "Biology"]) {
-    assert(await page.getByRole("heading", { name: s, exact: true }).first().isVisible(), `missing ${s}`);
-  }
+  assert((await page.locator("h1").count()) === 1, "exactly one h1");
+  assert((await text(page, "h1")).includes("reach into"), "headline");
   const links = await page.locator("main a[href^='/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
-  assert(links.length === 3, `expected 3 sim links, got ${links.join(",")}`);
+  assert(links.length === 3, `expected 3 plate links, got ${links.join(",")}`);
+  for (const l of await page.locator("main a").all()) assert(((await l.textContent()) ?? "").trim().length > 3, "link without text");
+  assert((await page.locator("h2").count()) >= 4, "plate headings + index heading");
+  for (const subject of ["Physics", "Chemistry", "Computer Science", "Biology"]) {
+    assert(await page.getByRole("heading", { name: subject }).first().isVisible(), `missing index column ${subject}`);
+  }
+  assert(await page.getByText("N-Body Orbital Mechanics").first().isVisible(), "planned item not shown");
+  assert((await page.locator("a:has-text('N-Body')").count()) === 0, "planned simulations must not be links");
   await page.getByRole("link", { name: /Hodgkin/ }).click();
   await page.waitForURL(/hodgkin-huxley/);
   await page.getByRole("link", { name: "← All simulations" }).click();
   await page.waitForURL((u) => u.pathname === "/" || u.pathname === "");
   await shot(page, "home");
+});
+
+await test("home: compact — about one screen on desktop, under 1.4 on a phone", async (page) => {
+  const height = async () => page.evaluate(() => document.documentElement.scrollHeight);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(url("/"));
+  await page.waitForTimeout(500);
+  const desktop = (await height()) / 900;
+  assert(desktop <= 1.15, `desktop page is ${desktop.toFixed(2)} screens tall (budget 1.15)`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(300);
+  const phone = (await height()) / 844;
+  assert(phone <= 1.4, `phone page is ${phone.toFixed(2)} screens tall (budget 1.4)`);
+  console.log(`      (desktop ${desktop.toFixed(2)} screens, phone ${phone.toFixed(2)} screens)`);
+});
+
+await test("home: no horizontal overflow at 320, 390, 768, 1024 and 1440 px", async (page) => {
+  for (const width of [320, 390, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(url("/"));
+    await page.waitForTimeout(300);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert(overflow <= 1, `${width}px: horizontal overflow ${overflow}px`);
+  }
+});
+
+await test("home: phone index is collapsed and expands on tap", async (page) => {
+  await page.goto(url("/"));
+  const details = page.locator("details");
+  assert((await details.count()) === 4, "four accordions");
+  assert((await page.locator("details[open]").count()) === 0, "accordions should start collapsed");
+  await page.locator("details summary").first().tap();
+  assert((await page.locator("details[open]").count()) === 1, "tap should open one");
+  assert(await page.getByText("N-Body Orbital Mechanics").last().isVisible(), "item visible after opening");
+}, { context: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
+
+await test("home: does not touch the GPU on load, and stays within size budgets", async (page) => {
+  const sizes = { script: 0, html: 0 };
+  const pending = [];
+  page.on("response", (r) =>
+    pending.push(
+      (async () => {
+        const type = r.request().resourceType();
+        const body = await r.body().catch(() => Buffer.alloc(0));
+        if (type === "script") sizes.script += body.length;
+        if (type === "document" && r.url().replace(/\/$/, "") === BASE_URL) sizes.html = zlib.gzipSync(body).length;
+      })(),
+    ),
+  );
+  await page.addInitScript(() => {
+    window.__gpuCalls = 0;
+    if (navigator.gpu) {
+      const original = GPU.prototype.requestAdapter;
+      GPU.prototype.requestAdapter = function (...args) {
+        window.__gpuCalls++;
+        return original.apply(this, args);
+      };
+    }
+  });
+  await page.goto(url("/"), { waitUntil: "networkidle" });
+  await page.waitForTimeout(1500);
+  await Promise.all(pending); // every response body counted before we add them up
+  const calls = await page.evaluate(() => window.__gpuCalls);
+  assert(calls === 0, `home requested a GPU adapter ${calls} time(s) before any interaction`);
+  // Baseline before the redesign: 456.6 KB (almost all of it the React + Next runtime). Must not grow.
+  assert(sizes.script <= 470 * 1024, `home JavaScript is ${(sizes.script / 1024).toFixed(0)} KB (budget 470 KB; 456.6 KB when the redesign started)`);
+  assert(sizes.html <= 14 * 1024, `home HTML is ${(sizes.html / 1024).toFixed(1)} KB gzipped (budget 14 KB)`);
+  console.log(`      (JS ${(sizes.script / 1024).toFixed(0)} KB, HTML ${(sizes.html / 1024).toFixed(1)} KB gzipped, GPU adapter requests: ${calls})`);
+});
+
+await test("home: automated accessibility audit (axe) finds no violations, desktop and phone", async (page) => {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto(url("/"));
+    await page.waitForTimeout(800);
+    const result = await new AxeBuilder({ page }).analyze();
+    const summary = result.violations.map((v) => `${v.id} (${v.nodes.length}): ${v.help}`);
+    assert(summary.length === 0, `${viewport.width}px: ${summary.join(" | ")}`);
+  }
 });
 
 await test("routes: unknown simulations return 404", async (page) => {
