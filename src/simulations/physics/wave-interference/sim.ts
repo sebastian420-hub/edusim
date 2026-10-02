@@ -1,5 +1,4 @@
-import { effect, frameLoop } from "vgpu";
-import { frameDelta } from "@/lib/gpu/runtime";
+import { effect } from "vgpu";
 import type { SimContext, SimHandle } from "@/lib/gpu/runtime";
 import waveShader from "./wave.wgsl";
 import { DEFAULTS } from "./wave";
@@ -19,7 +18,7 @@ export interface WaveHandle extends SimHandle {
   reset(): void;
 }
 
-export function createWaveSim({ gpu, surface, clock }: SimContext): WaveHandle {
+export function createWaveSim({ gpu, surface, loop: frameLoop }: SimContext): WaveHandle {
   const pass = effect(gpu, waveShader);
 
   let params: WaveParams = { ...DEFAULTS };
@@ -41,9 +40,9 @@ export function createWaveSim({ gpu, surface, clock }: SimContext): WaveHandle {
   pass.set({ u: { resolution: surface.size, time, ...paramUniforms() } });
   const stopResizeListener = surface.onResize(() => pass.set({ u: { resolution: surface.size } }));
 
-  const loop = frameLoop(gpu, (frame) => {
+  const loop = frameLoop((frame, dt) => {
     if (playing) {
-      time += frameDelta(clock);
+      time += dt;
       pass.set({ u: { time } });
     }
     frame.pass(surface, pass);

@@ -27,7 +27,7 @@ export default function CellularAutomataControls() {
     () => (ctx: Parameters<typeof createCellularAutomata>[0]) =>
       createCellularAutomata(ctx, { onGeneration: setGeneration, onZoom: setZoom }),
   );
-  const { canvasRef, status, sim } = useGpuSim<CellularAutomataHandle>(factory);
+  const { canvasRef, status, sim, quality } = useGpuSim<CellularAutomataHandle>(factory);
 
   const [params, setParams] = useState<Pick<CellularAutomataParams, "birth" | "survive" | "speed" | "theme">>({
     birth: "3",
@@ -220,6 +220,7 @@ export default function CellularAutomataControls() {
       subject="cs"
       difficulty="easy"
       status={status}
+      quality={quality}
       controls={controls}
       explanation={explanation}
       initiallyPlaying={false}

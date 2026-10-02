@@ -47,8 +47,9 @@ one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessi
 - ✅ **Keyboard shortcuts** for every sim (in `SimLayout`): Space play/pause, `.` step, `R` reset, `?` help.
 - **Touch:** pinch-zoom and two-finger pan for CA; larger hit targets; sidebar becomes a bottom
   drawer on phones so the canvas keeps most of the screen.
-- **Adaptive quality:** if frame time stays high, lower the render DPR (wave and HH renderers are
-  per-pixel; CA at 2048² is the heaviest), restore when it recovers.
+- ✅ **Adaptive quality + frame pacing:** bounded frame queue (Pause stays responsive on slow GPUs) and a
+  governor that lowers render resolution (down to 35%) when GPU frames cost too much, restoring it only when the
+  predicted cost fits; badge + `localStorage edusim:quality=full` to pin full resolution.
 - **Accessibility basics:** visible focus everywhere, an `aria-live` text summary of what the canvas
   shows (e.g. "Firing at 68 Hz", "Generation 120, 412 live cells"), colour-blind-safe CA themes and
   HH trace colours, respect `prefers-reduced-motion` (start paused).

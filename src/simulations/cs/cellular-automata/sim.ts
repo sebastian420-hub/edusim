@@ -1,6 +1,5 @@
-import { compute, effect, frameLoop, pingPongStorage } from "vgpu";
+import { compute, effect, pingPongStorage } from "vgpu";
 import type { PingPongStorage, StorageBuffer } from "vgpu";
-import { frameDelta } from "@/lib/gpu/runtime";
 import type { SimContext, SimHandle } from "@/lib/gpu/runtime";
 import computeShader from "./compute.wgsl";
 import renderShader from "./render.wgsl";
@@ -53,7 +52,7 @@ type OffsetWritable = StorageBuffer & { write(data: BufferSource, offset?: numbe
 type Destroyable = { destroy?: () => void };
 
 export function createCellularAutomata(
-  { gpu, canvas, surface, clock }: SimContext,
+  { gpu, canvas, surface, loop: frameLoop }: SimContext,
   { gridSize = 256, onGeneration, onZoom }: CellularAutomataOptions = {},
 ): CellularAutomataHandle {
   const computePass = compute(gpu, computeShader);
@@ -148,8 +147,7 @@ export function createCellularAutomata(
 
   applyInitial();
 
-  const loop = frameLoop(gpu, (frame) => {
-    const dt = frameDelta(clock);
+  const loop = frameLoop((frame, dt) => {
     if (playing) {
       stepDebt += dt;
       const interval = 1 / params.speed;
