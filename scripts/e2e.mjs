@@ -384,7 +384,7 @@ await test("cellular-automata: Gosper gun is alive after 100 generations (rule c
 // ───────────────────────────── resilience ─────────────────────────────
 await test("navigation churn: open/close each simulation 3 times without errors", async (page) => {
   for (let i = 0; i < 3; i++) {
-    for (const [label, route] of [["Wave", "/physics/wave-interference"], ["Hodgkin", "/biology/hodgkin-huxley"], ["Cellular", "/cs/cellular-automata"]]) {
+    for (const route of ["/physics/wave-interference", "/biology/hodgkin-huxley", "/cs/cellular-automata"]) {
       await open(page, route);
       await page.getByRole("link", { name: "← All simulations" }).click();
       await page.waitForURL((u) => u.pathname === "/");
