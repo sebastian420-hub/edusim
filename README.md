@@ -73,6 +73,17 @@ src/
       *.wgsl                    shaders, loaded through vgpu's bundler loader
 ```
 
+## Shared features for simulations
+
+- **Shareable state:** `usePersistedParams(simId, schema, defaults)` keeps settings in the URL (and, as a fallback,
+  localStorage). Schemas in `lib/urlState.ts` clamp/validate everything, so a bad link can't break a sim.
+- **`SimLayout`:** copy link, save image, reset to defaults, keyboard shortcuts (Space, `.`, `R`, `?`) and an
+  optional Challenges tab.
+- **Challenges:** data in `lib/challenges.ts` format (predict → set up → goal check → explanation), rendered by
+  `ChallengesPanel`. See `simulations/physics/wave-interference/challenges.ts`.
+- **Measurement:** analytic sims get a TypeScript twin of the shader (`wave.ts`) used for graphs and readouts,
+  and a GPU test proving the two agree.
+
 ## Adding a simulation
 
 1. Create `src/simulations/<subject>/<id>/` with `*.wgsl`, `sim.ts` (a `SimFactory` that returns a handle with

@@ -2,32 +2,11 @@ import { effect, frameLoop } from "vgpu";
 import { frameDelta } from "@/lib/gpu/runtime";
 import type { SimContext, SimHandle } from "@/lib/gpu/runtime";
 import waveShader from "./wave.wgsl";
+import { DEFAULTS } from "./wave";
+import type { WaveMode, WaveParams, WaveView } from "./wave";
 
-export type WaveMode = "point" | "two-points" | "single-slit" | "double-slit";
-export type WaveView = "amplitude" | "intensity" | "water";
-
-export interface WaveParams {
-  frequency: number;
-  amplitude: number;
-  damping: number;
-  waveSpeed: number;
-  mode: WaveMode;
-  /** Distance between the two point sources / slit centres. */
-  separation: number;
-  slitWidth: number;
-  view: WaveView;
-}
-
-export const DEFAULTS: WaveParams = {
-  frequency: 3.0,
-  amplitude: 1.0,
-  damping: 0.02,
-  waveSpeed: 1.0,
-  mode: "double-slit",
-  separation: 0.8,
-  slitWidth: 0.15,
-  view: "amplitude",
-};
+export { DEFAULTS } from "./wave";
+export type { WaveMode, WaveParams, WaveView } from "./wave";
 
 // Must match the numeric codes in wave.wgsl.
 const MODE_CODES: Record<WaveMode, number> = { point: 0, "two-points": 1, "single-slit": 2, "double-slit": 3 };

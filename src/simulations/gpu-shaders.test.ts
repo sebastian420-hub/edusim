@@ -6,6 +6,8 @@ import computeShader from "./cs/cellular-automata/compute.wgsl";
 import { workgroupsFor } from "./cs/cellular-automata/workgroup";
 import neuronShader from "./biology/hodgkin-huxley/neuron.wgsl";
 import waveShader from "./physics/wave-interference/wave.wgsl";
+import { DEFAULTS as WAVE_DEFAULTS, phasor as wavePhasor } from "./physics/wave-interference/wave";
+import type { WaveMode } from "./physics/wave-interference/wave";
 import { DEFAULT_PARAMS, DT_MS, HISTORY_SAMPLES, REST_STATE, SAMPLE_EVERY, simulate } from "./biology/hodgkin-huxley/hh";
 
 let gpu: NodeGpu | null = null;
@@ -156,4 +158,55 @@ describe("Wave interference shader", () => {
       }
     }
   });
+});
+
+describe("Wave shader vs CPU twin", () => {
+  // Test-only compute entry appended to the real shader source so the fragment shader's own
+  // phasor() maths is evaluated at arbitrary points and read back.
+  const probeSource =
+    waveShader.wgsl +
+    `
+@group(0) @binding(1) var<storage, read_write> samples: array<vec4f>;
+@compute @workgroup_size(8)
+fn probe(@builtin(global_invocation_id) id: vec3u) {
+  if (id.x >= arrayLength(&samples)) { return; }
+  let ph = phasor(samples[id.x].xy);
+  samples[id.x] = vec4f(ph, 0.0, 0.0);
+}`;
+  const MODE_CODES: Record<WaveMode, number> = { point: 0, "two-points": 1, "single-slit": 2, "double-slit": 3 };
+  const points: [number, number][] = [];
+  for (const x of [-3, -1.6, -1.4, -0.2, 0.9, 2.5]) for (const y of [-1.8, -0.55, 0, 0.3, 1.4]) points.push([x, y]);
+
+  for (const mode of Object.keys(MODE_CODES) as WaveMode[]) {
+    needsGpu(`phasor matches the twin in ${mode} mode`, async (gpu) => {
+      const p = { ...WAVE_DEFAULTS, mode, frequency: 4.5, damping: 0.03, separation: 0.9, slitWidth: 0.2 };
+      const input = new Float32Array(points.length * 4);
+      points.forEach(([x, y], i) => input.set([x, y, 0, 0], i * 4));
+      const buffer = storage(gpu, input.byteLength);
+      buffer.write(input);
+      compute(gpu, probeSource, { entry: "probe" })
+        .set({
+          u: {
+            resolution: [100, 100],
+            time: 0,
+            frequency: p.frequency,
+            amplitude: p.amplitude,
+            damping: p.damping,
+            waveSpeed: p.waveSpeed,
+            separation: p.separation,
+            slitWidth: p.slitWidth,
+            mode: MODE_CODES[mode],
+            viewMode: 0,
+          },
+          samples: buffer,
+        })
+        .dispatch(Math.ceil(points.length / 8));
+      const out = new Float32Array(await buffer.read());
+      points.forEach(([x, y], i) => {
+        const [c, s] = wavePhasor(p, x, y);
+        expect(out[i * 4], `C at ${x},${y}`).toBeCloseTo(c, 3);
+        expect(out[i * 4 + 1], `S at ${x},${y}`).toBeCloseTo(s, 3);
+      });
+    });
+  }
 });

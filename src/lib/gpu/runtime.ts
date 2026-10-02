@@ -94,3 +94,16 @@ export function launchSim<H extends SimHandle>(
 export function frameDelta(c: Clock, max = 0.1): number {
   return Math.min(Math.max(c.deltaTime, 0), max);
 }
+
+/**
+ * PNG snapshot of a WebGPU canvas. The drawing buffer only holds valid pixels during the frame it was
+ * presented in, so the read happens inside a requestAnimationFrame callback (which runs after the
+ * render loop's callback for the same frame) rather than at an arbitrary time.
+ */
+export function captureCanvas(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    requestAnimationFrame(() =>
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Canvas capture failed"))), "image/png"),
+    );
+  });
+}

@@ -40,11 +40,11 @@ Done: `git push` runs `pnpm verify` (`.githooks/pre-push`, installed by `pnpm in
 static site to `out/` that passes the browser smoke test from a plain file server; `pnpm smoke:local` is the
 one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessions.
 
-## Phase B — Interaction polish (1–2 days)
+## Phase B — Interaction polish (1–2 days) · partly done (shortcuts)
 
 - **Cellular automata opens readable:** "fit to content" zoom on load/pattern change instead of a
   tiny pattern in a 256² grid; "Fit grid" and "Fit pattern" buttons.
-- **Keyboard shortcuts** for every sim: Space play/pause, `.` step, `R` reset, `?` shows shortcuts.
+- ✅ **Keyboard shortcuts** for every sim (in `SimLayout`): Space play/pause, `.` step, `R` reset, `?` help.
 - **Touch:** pinch-zoom and two-finger pan for CA; larger hit targets; sidebar becomes a bottom
   drawer on phones so the canvas keeps most of the screen.
 - **Adaptive quality:** if frame time stays high, lower the render DPR (wave and HH renderers are
@@ -53,7 +53,7 @@ one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessi
   shows (e.g. "Firing at 68 Hz", "Generation 120, 412 live cells"), colour-blind-safe CA themes and
   HH trace colours, respect `prefers-reduced-motion` (start paused).
 
-## Phase C — Shareable & persistent state (1 day)
+## Phase C — Shareable & persistent state (1 day) · ✅ done for Wave (rolling out to HH and CA)
 
 - **State in the URL** for every sim (`?mode=double-slit&separation=0.8…`), parsed and clamped by a
   small typed schema per sim, so a configuration is a link — also the mechanism challenges use to set
@@ -62,7 +62,7 @@ one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessi
 - **Remember last settings** per sim in `localStorage` (URL wins when present).
 - **Save image** (PNG of the current canvas) for worksheets and reports.
 
-## Phase D — Measurement tools & linked representations (3–5 days) · the core pedagogy
+## Phase D — Measurement tools & linked representations (3–5 days) · the core pedagogy · ✅ Wave done
 
 Shared building blocks: a small `MiniChart` component (SVG, theme-aware) and a "probe" pattern —
 CPU twin for analytic sims, async GPU read-back for state-based ones.
@@ -87,7 +87,7 @@ CPU twin for analytic sims, async GPU read-back for state-based ones.
 
 Done when: each sim has at least one quantitative readout that a test asserts is correct.
 
-## Phase E — Guided experiments (3–4 days)
+## Phase E — Guided experiments (3–4 days) · ✅ framework + 3 Wave challenges
 
 A data-driven **Challenges** tab in the sidebar (Explore | Challenges), optional by design.
 
