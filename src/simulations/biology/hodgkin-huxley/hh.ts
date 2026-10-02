@@ -142,3 +142,91 @@ export function countSpikes(V: number[], threshold = 0): number {
   }
   return count;
 }
+
+// ───────────────────────── measurements (used by the readouts, f–I curve and challenges) ─────────────────────────
+
+/** Times (ms) at which the voltage crosses `threshold` upwards, linearly interpolated between samples. */
+export function spikeTimes(trace: Trace, threshold = 0): number[] {
+  const times: number[] = [];
+  for (let i = 1; i < trace.V.length; i++) {
+    if (trace.V[i - 1] < threshold && trace.V[i] >= threshold) {
+      const f = (threshold - trace.V[i - 1]) / (trace.V[i] - trace.V[i - 1]);
+      times.push(trace.t[i - 1] + f * (trace.t[i] - trace.t[i - 1]));
+    }
+  }
+  return times;
+}
+
+/**
+ * Steady-state firing rate (Hz) under sustained (DC) current, from the interval between the last two
+ * spikes of a run (the first ~half is discarded as the onset transient). 0 when fewer than two spikes.
+ */
+export function steadyFiringRate(p: HHParams, durationMs = 300): number {
+  const times = spikeTimes(simulate({ ...p, pulse_mode: 0 }, durationMs));
+  if (times.length < 2) return 0;
+  const interval = times[times.length - 1] - times[times.length - 2];
+  return interval > 0 ? 1000 / interval : 0;
+}
+
+/** Spikes fired in the last complete stimulus cycle (pulse / twin modes), after a warm-up cycle. */
+export function spikesPerCycle(p: HHParams): number {
+  const cycles = 4;
+  const times = spikeTimes(simulate(p, PULSE_PERIOD * cycles));
+  const lastCycleStart = PULSE_PERIOD * (cycles - 1);
+  return times.filter((t) => t >= lastCycleStart).length;
+}
+
+/** Steady firing rate (Hz) for each injected DC current in `currents` (other parameters as in `p`). */
+export function firingRateCurve(p: HHParams, currents: number[], durationMs = 250): number[] {
+  return currents.map((I_inj) => steadyFiringRate({ ...p, I_inj }, durationMs));
+}
+
+/** Lowest current in the curve that produces repetitive firing (the onset / rheobase), if any. */
+export function rheobase(currents: number[], rates: number[]): number | undefined {
+  const i = rates.findIndex((r) => r > 0);
+  return i === -1 ? undefined : currents[i];
+}
+
+/**
+ * Sample at horizontal position `fraction` (0 = oldest, 1 = newest) of the ring buffer the GPU
+ * maintains: `history` holds `HISTORY_SAMPLES` samples of (V, m, h, n), and `head` is the index the
+ * next sample will be written to — which is also where the oldest sample lives.
+ */
+export function sampleAt(history: Float32Array, head: number, fraction: number) {
+  const k = Math.min(HISTORY_SAMPLES - 1, Math.max(0, Math.round(fraction * (HISTORY_SAMPLES - 1))));
+  const i = ((head + k) % HISTORY_SAMPLES) * 4;
+  return {
+    V: history[i],
+    m: history[i + 1],
+    h: history[i + 2],
+    n: history[i + 3],
+    /** How long before "now" this sample was recorded (ms). */
+    msAgo: (HISTORY_SAMPLES - 1 - k) * SAMPLE_EVERY * DT_MS,
+  };
+}
+
+export interface FiAnalysis {
+  currents: number[];
+  rates: number[];
+  /** Lowest sustained-firing current, refined by bisection to ~0.03 µA/cm²; undefined if none up to the sweep's end. */
+  rheobase?: number;
+}
+
+/**
+ * Firing-rate vs injected-current curve (0..`maxCurrent` in 1 µA/cm² steps, DC stimulation) and its
+ * onset current. Depends only on conductances and temperature, not on the injected current itself.
+ */
+export function fiAnalysis(p: HHParams, maxCurrent = 30, durationMs = 250): FiAnalysis {
+  const currents = Array.from({ length: maxCurrent + 1 }, (_, i) => i);
+  const rates = firingRateCurve(p, currents, durationMs);
+  const first = rates.findIndex((r) => r > 0);
+  if (first === -1) return { currents, rates };
+  let lo = first === 0 ? 0 : currents[first - 1];
+  let hi = currents[first];
+  for (let i = 0; i < 6; i++) {
+    const mid = (lo + hi) / 2;
+    if (steadyFiringRate({ ...p, I_inj: mid }, durationMs) > 0) hi = mid;
+    else lo = mid;
+  }
+  return { currents, rates, rheobase: hi };
+}

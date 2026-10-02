@@ -88,6 +88,8 @@ async function open(page, route) {
 }
 
 const canvasPixels = (page) => page.locator("canvas").screenshot();
+// By role: a label match is a substring match and would also hit e.g. the chart's accessible name.
+const slider = (page, name) => page.getByRole("slider", { name, exact: true });
 /**
  * True when two PNGs show the same picture. Byte equality is too strict for a software renderer, whose
  * output can differ by one colour level between presented buffers, so small differences are tolerated.
@@ -349,8 +351,8 @@ await test("hodgkin-huxley: runs, pauses, presets and sliders respond", async (p
     await page.getByRole("button", { name: preset }).click();
     await page.waitForTimeout(400);
   }
-  await page.getByLabel("Playback speed").fill("120");
-  await page.getByLabel("Temperature").fill("20");
+  await slider(page, "Playback speed").fill("120");
+  await slider(page, "Temperature").fill("20");
   await page.getByRole("radio", { name: "Twin" }).check();
   await page.waitForTimeout(500);
   await shot(page, "hh");
@@ -358,7 +360,8 @@ await test("hodgkin-huxley: runs, pauses, presets and sliders respond", async (p
 
 await test("hodgkin-huxley: TTX flattens the spike (pixel check on the voltage trace)", async (page) => {
   await open(page, "/biology/hodgkin-huxley");
-  // Count bright-green (voltage trace) pixels in the top quarter of the canvas, where spikes peak.
+  // Count bright-green (voltage trace) pixels where spikes peak: the top quarter, in the stretch of the canvas
+  // between the legend (left) and the readout card (right), so overlay text is not counted.
   const spikeCount = async () => {
     const png = await canvasPixels(page);
     return page.evaluate(async (b64) => {
@@ -366,7 +369,8 @@ await test("hodgkin-huxley: TTX flattens the spike (pixel check on the voltage t
       const c = new OffscreenCanvas(img.width, img.height);
       const g = c.getContext("2d");
       g.drawImage(img, 0, 0);
-      const { data } = g.getImageData(0, 0, img.width, Math.floor(img.height * 0.2));
+      const x0 = Math.floor(img.width * 0.45);
+      const { data } = g.getImageData(x0, 0, Math.floor(img.width * 0.72) - x0, Math.floor(img.height * 0.25));
       let n = 0;
       for (let i = 0; i < data.length; i += 4) if (data[i + 1] > 180 && data[i] < 120 && data[i + 2] < 140) n++;
       return n;
@@ -378,7 +382,120 @@ await test("hodgkin-huxley: TTX flattens the spike (pixel check on the voltage t
   await page.getByRole("button", { name: "TTX Block" }).click();
   await page.waitForTimeout(4000);
   const ttx = await spikeCount();
-  assert(normal > 20 && ttx < normal / 4, `voltage pixels near the top: normal=${normal}, ttx=${ttx}`);
+  assert(normal > 15 && ttx < normal / 4, `voltage pixels near the top: normal=${normal}, ttx=${ttx}`);
+});
+
+await test("hodgkin-huxley: URL state, restore, defaults, copy link, save image", async (page) => {
+  await open(page, "/biology/hodgkin-huxley?I_inj=12&g_Na=0&temperature=20&pulse_mode=1");
+  assert((await slider(page, "Injected current").inputValue()) === "12", "I_inj from URL");
+  assert((await slider(page, "Na⁺ conductance (TTX)").inputValue()) === "0", "g_Na from URL");
+  assert(await page.getByRole("radio", { name: "Pulse" }).isChecked(), "stimulus from URL");
+  await slider(page, "Temperature").fill("25");
+  await page.waitForTimeout(200);
+  assert(page.url().includes("temperature=25"), `URL not updated: ${page.url()}`);
+  await page.goto(url("/biology/hodgkin-huxley"));
+  await page.locator("canvas").waitFor();
+  assert((await slider(page, "Temperature").inputValue()) === "25", "settings not restored from storage");
+  await page.getByRole("button", { name: "Copy link" }).click();
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  assert(clip === page.url() && clip.includes("g_Na=0"), `clipboard: ${clip}`);
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Save image" }).click()]);
+  const file = path.join(os.tmpdir(), `edusim-hh-${Date.now()}.png`);
+  await download.saveAs(file);
+  const size = fs.statSync(file).size;
+  fs.rmSync(file);
+  assert(size > 10_000, `PNG too small (blank?): ${size}B`);
+  await page.getByRole("button", { name: "Defaults" }).click();
+  assert(!page.url().includes("?"), `URL not cleared: ${page.url()}`);
+  assert((await slider(page, "Na⁺ conductance (TTX)").inputValue()) === "120", "defaults not applied");
+});
+
+await test("hodgkin-huxley: firing-rate readout, firing-rate curve and threshold", async (page) => {
+  await open(page, "/biology/hodgkin-huxley");
+  const rate = async () => (await text(page, "[data-testid=hh-rate]")).trim();
+  const hz = parseFloat(await rate());
+  assert(hz > 60 && hz < 76, `expected ~68 Hz at I=10, got "${await rate()}"`);
+  const note = await text(page, "text=/Starts firing at/");
+  const threshold = parseFloat(note.match(/≈ ([\d.]+)/)[1]);
+  assert(threshold > 5 && threshold < 6.5, `threshold ${threshold}`);
+  assert((await page.locator("figure svg[role=img]").count()) === 1, "f–I chart missing");
+  await slider(page, "Injected current").fill("3");
+  await page.waitForTimeout(300);
+  assert((await rate()) === "silent", `expected silent at I=3, got "${await rate()}"`);
+  await slider(page, "Na⁺ conductance (TTX)").fill("0");
+  await page.waitForFunction(() => document.body.innerText.includes("No repetitive firing"), null, { timeout: 15_000 });
+  await page.getByRole("radio", { name: "Pulse" }).check();
+  await slider(page, "Injected current").fill("10");
+  await page.waitForTimeout(300);
+  assert(/0 spikes per 25 ms/.test(await rate()), `TTX pulse readout: "${await rate()}"`);
+  await page.getByRole("button", { name: "Normal AP" }).click();
+  await page.waitForTimeout(300);
+  assert(/^1 spike per 25 ms/.test(await rate()), `normal pulse readout: "${await rate()}"`);
+  await shot(page, "hh-measure");
+});
+
+await test("hodgkin-huxley: hover cursor reads plausible voltage and gate values", async (page) => {
+  await open(page, "/biology/hodgkin-huxley");
+  await page.getByRole("button", { name: "Pause" }).click();
+  await page.waitForTimeout(800);
+  const box = await page.locator("canvas").boundingBox();
+  const read = async (fraction) => {
+    await page.mouse.move(box.x + box.width * fraction, box.y + box.height / 2);
+    await page.waitForSelector("[data-testid=hh-cursor]");
+    await page.waitForTimeout(450); // let a fresh GPU read-back arrive
+    const t = await text(page, "[data-testid=hh-cursor]");
+    const num = (re) => parseFloat(t.match(re)[1]);
+    return { ago: num(/([\d.]+) ms ago/), V: num(/V = (-?[\d.]+)/), m: num(/m = ([\d.]+)/), h: num(/h = ([\d.]+)/), n: num(/n = ([\d.]+)/) };
+  };
+  const left = await read(0.05);
+  const right = await read(0.95);
+  for (const r of [left, right]) {
+    assert(r.V >= -100 && r.V <= 60, `V out of range: ${r.V}`);
+    for (const g of [r.m, r.h, r.n]) assert(g >= 0 && g <= 1, `gate out of range: ${g}`);
+  }
+  assert(left.ago > right.ago + 80, `time axis wrong: ${left.ago} vs ${right.ago} ms ago`);
+  assert(right.ago < 8, `right edge should be "now": ${right.ago} ms ago`);
+  await page.mouse.move(box.x - 5, box.y - 5);
+  await page.waitForTimeout(200);
+  assert((await page.locator("[data-testid=hh-cursor]").count()) === 0, "cursor readout should disappear when not hovering");
+  await shot(page, "hh-cursor");
+});
+
+await test("hodgkin-huxley: challenge flow (threshold) with persistence", async (page) => {
+  await open(page, "/biology/hodgkin-huxley");
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /Find the firing threshold/ }).click();
+  await page.getByLabel(/stay silent until a threshold/).check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  assert((await slider(page, "Injected current").inputValue()) === "0", "setup should set current to 0");
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "goal met too early");
+  const current = slider(page, "Injected current");
+  await current.focus();
+  for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight"); // 2 µA/cm²: still silent
+  await page.waitForTimeout(300);
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "goal met below threshold");
+  for (let i = 0; i < 9; i++) await page.keyboard.press("ArrowRight"); // 6.5 µA/cm²: just over threshold
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 15_000 });
+  assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
+  await shot(page, "hh-challenge");
+  await page.reload();
+  await page.locator("canvas").waitFor();
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  assert((await page.locator("text=/1 of 3 done/").count()) === 1, "completion not persisted");
+});
+
+await test("hodgkin-huxley: challenge flow (TTX) cannot be solved by removing the current", async (page) => {
+  await open(page, "/biology/hodgkin-huxley");
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /Silence it with a toxin/ }).click();
+  await page.getByLabel(/spikes disappear/).check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  await slider(page, "Injected current").fill("0");
+  await page.waitForTimeout(500);
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "shortcut accepted");
+  await slider(page, "Injected current").fill("15");
+  await slider(page, "Na⁺ conductance (TTX)").fill("30");
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 15_000 });
 });
 
 // ───────────────────────────── cellular automata ─────────────────────────────

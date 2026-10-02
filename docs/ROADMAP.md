@@ -54,7 +54,7 @@ one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessi
   shows (e.g. "Firing at 68 Hz", "Generation 120, 412 live cells"), colour-blind-safe CA themes and
   HH trace colours, respect `prefers-reduced-motion` (start paused).
 
-## Phase C — Shareable & persistent state (1 day) · ✅ done for Wave (rolling out to HH and CA)
+## Phase C — Shareable & persistent state (1 day) · ✅ Wave + Hodgkin–Huxley (CA next)
 
 - **State in the URL** for every sim (`?mode=double-slit&separation=0.8…`), parsed and clamped by a
   small typed schema per sim, so a configuration is a link — also the mechanism challenges use to set
@@ -63,7 +63,7 @@ one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessi
 - **Remember last settings** per sim in `localStorage` (URL wins when present).
 - **Save image** (PNG of the current canvas) for worksheets and reports.
 
-## Phase D — Measurement tools & linked representations (3–5 days) · the core pedagogy · ✅ Wave done
+## Phase D — Measurement tools & linked representations (3–5 days) · the core pedagogy · ✅ Wave + Hodgkin–Huxley (CA next)
 
 Shared building blocks: a small `MiniChart` component (SVG, theme-aware) and a "probe" pattern —
 CPU twin for analytic sims, async GPU read-back for state-based ones.
@@ -88,7 +88,7 @@ CPU twin for analytic sims, async GPU read-back for state-based ones.
 
 Done when: each sim has at least one quantitative readout that a test asserts is correct.
 
-## Phase E — Guided experiments (3–4 days) · ✅ framework + 3 Wave challenges
+## Phase E — Guided experiments (3–4 days) · ✅ framework + 3 Wave + 3 Hodgkin–Huxley challenges
 
 A data-driven **Challenges** tab in the sidebar (Explore | Challenges), optional by design.
 
