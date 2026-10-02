@@ -10,6 +10,7 @@ Built with Next.js 16 (App Router, Turbopack), React 19, Tailwind 4 and [vgpu](h
 | Cellular Automata | Computer Science | Ping-pong compute shader over grids up to 2048², pan/zoom renderer |
 
 The catalog in `src/lib/subjects.ts` lists many more planned simulations (marked "Coming Soon").
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the improvement plan.
 
 ## Getting started
 
