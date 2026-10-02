@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks a push when the project doesn't verify. Skip in an emergency with: git push --no-verify
+echo "pre-push: running pnpm verify (lint, typecheck, tests, shader validation, build)..."
+exec pnpm verify
