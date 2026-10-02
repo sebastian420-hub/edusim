@@ -1,6 +1,7 @@
 import { clock, frameLoop, init, surface } from "vgpu";
 import type { Clock, Frame, FrameLoopHandle, Gpu, Surface } from "vgpu";
 import { FramePacer, QualityGovernor } from "./pacing";
+import { hasWebGPU } from "./support";
 
 export type GpuStatus =
   | { state: "loading" }
@@ -30,14 +31,24 @@ export interface SimHandle {
 /** Builds a simulation on an initialised GPU. Must be a stable (module-level) function. */
 export type SimFactory<H extends SimHandle> = (ctx: SimContext) => H | Promise<H>;
 
-export function hasWebGPU(): boolean {
-  return typeof navigator !== "undefined" && "gpu" in navigator && !!navigator.gpu;
-}
+export { hasWebGPU };
+
+/**
+ * Canvases whose render loop can be told "render on the next tick, whatever the pacer says". Used by
+ * `captureCanvas`: a snapshot is only valid in a tick that actually presented a frame, and the pacer
+ * deliberately skips ticks while a slow GPU is busy.
+ */
+const forceRenderOf = new WeakMap<HTMLCanvasElement, () => void>();
 
 /** vgpu's CanvasSurface supports explicit resizing; the public `Surface` type just doesn't declare it. */
 type ResizableSurface = Surface & { resize(size: readonly [number, number]): void };
 
-const MAX_DPR = 2;
+const DEFAULT_MAX_DPR = 2;
+
+export interface LaunchOptions {
+  /** Cap on the device pixel ratio the canvas is rendered at (default 2). Small previews use less. */
+  maxDpr?: number;
+}
 
 /** Key of the localStorage setting that pins full resolution (value "full"): crisp projector/screenshots. */
 export const QUALITY_STORAGE_KEY = "edusim:quality";
@@ -54,8 +65,8 @@ function fullQualityForced(): boolean {
  * A surface whose resolution we control: canvas pixels = CSS size x device pixel ratio (1..2) x `scale`.
  * Lowering `scale` is how the quality governor trades resolution for frame rate.
  */
-function createAdaptiveSurface(g: Gpu, canvas: HTMLCanvasElement) {
-  const pixelRatio = () => Math.min(MAX_DPR, Math.max(1, window.devicePixelRatio || 1));
+function createAdaptiveSurface(g: Gpu, canvas: HTMLCanvasElement, maxDpr: number) {
+  const pixelRatio = () => Math.min(maxDpr, Math.max(1, window.devicePixelRatio || 1));
   const sizeFor = (scale: number): [number, number] => [
     Math.max(1, Math.round(canvas.clientWidth * pixelRatio() * scale)),
     Math.max(1, Math.round(canvas.clientHeight * pixelRatio() * scale)),
@@ -96,11 +107,16 @@ export function launchSim<H extends SimHandle>(
   onReady: (handle: H) => void,
   onStatus: (status: GpuStatus) => void,
   onQuality: (scale: number) => void = () => {},
+  { maxDpr = DEFAULT_MAX_DPR }: LaunchOptions = {},
 ): () => void {
   let disposed = false;
   let gpu: Gpu | undefined;
   let handle: H | undefined;
   let stopSurface: (() => void) | undefined;
+  let forceRender = false;
+  forceRenderOf.set(canvas, () => {
+    forceRender = true;
+  });
 
   void (async () => {
     if (!hasWebGPU()) {
@@ -118,7 +134,7 @@ export function launchSim<H extends SimHandle>(
         console.error("[gpu]", err.message, { cause: err.cause, detail: (err as { detail?: unknown }).detail });
         if (!disposed) onStatus({ state: "error", message: err.message });
       });
-      const adaptive = createAdaptiveSurface(g, canvas);
+      const adaptive = createAdaptiveSurface(g, canvas, maxDpr);
       stopSurface = adaptive.dispose;
       const frameClock = clock(g);
       const pacer = new FramePacer();
@@ -131,7 +147,9 @@ export function launchSim<H extends SimHandle>(
         loop(callback) {
           let lastTime: number | undefined;
           return frameLoop(g, (frame) => {
-            if (!pacer.shouldRender()) return; // GPU still busy with earlier frames: skip this tick
+            // GPU still busy with earlier frames: skip this tick (unless a snapshot needs a fresh frame).
+            if (!forceRender && !pacer.shouldRender()) return;
+            forceRender = false;
             const now = frameClock.time;
             const dt = lastTime === undefined ? 0 : Math.min(Math.max(now - lastTime, 0), 0.1);
             lastTime = now;
@@ -164,6 +182,7 @@ export function launchSim<H extends SimHandle>(
 
   return () => {
     disposed = true;
+    forceRenderOf.delete(canvas);
     stopSurface?.();
     handle?.dispose?.();
     gpu?.dispose();
@@ -176,6 +195,7 @@ export function launchSim<H extends SimHandle>(
  * render loop's callback for the same frame) rather than at an arbitrary time.
  */
 export function captureCanvas(canvas: HTMLCanvasElement): Promise<Blob> {
+  forceRenderOf.get(canvas)?.(); // make the loop render on the next tick so there is a fresh frame to read
   return new Promise((resolve, reject) => {
     requestAnimationFrame(() =>
       canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Canvas capture failed"))), "image/png"),

@@ -192,6 +192,7 @@ export default function CellularAutomataControls() {
           <option value={0}>Classic Green</option>
           <option value={1}>Cyberpunk Neon</option>
           <option value={2}>Minimal White</option>
+          <option value={3}>Amber</option>
         </select>
       </label>
     </>

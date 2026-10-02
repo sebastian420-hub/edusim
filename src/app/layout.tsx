@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -16,6 +16,8 @@ export const metadata: Metadata = {
   title: { default: "EduSim — GPU-powered science simulations", template: "%s · EduSim" },
   description: "Interactive physics, biology and computer-science simulations that run on your GPU with WebGPU.",
 };
+
+export const viewport: Viewport = { themeColor: "#0a0c10", colorScheme: "dark" };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (

@@ -10,10 +10,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright-core";
+import zlib from "node:zlib";
 
 const BASE_URL = (process.env.BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const SHOTS = process.env.SHOTS_DIR; // optional: save screenshots here
+// Set E2E_DEV=1 when testing `next dev`: its bundles are unminified, so the size budgets do not apply.
+const IS_DEV = process.env.E2E_DEV === "1";
 // Static exports use trailing slashes; harmless elsewhere.
 const url = (p) => `${BASE_URL}${p}`;
 
@@ -147,14 +151,20 @@ async function waitForChange(page, reference, message, timeout = 10_000) {
 const text = async (page, selector) => (await page.locator(selector).first().textContent()) ?? "";
 
 // ───────────────────────────── home ─────────────────────────────
-await test("home: renders, groups by subject, links to the 3 available sims", async (page) => {
+await test("home: compact editorial layout — plates link to the 3 simulations, planned ones are plain text", async (page) => {
   await page.goto(url("/"));
   assert((await page.title()).includes("EduSim"), `title: ${await page.title()}`);
-  for (const s of ["Physics", "Chemistry", "Computer Science", "Biology"]) {
-    assert(await page.getByRole("heading", { name: s, exact: true }).first().isVisible(), `missing ${s}`);
-  }
+  assert((await page.locator("h1").count()) === 1, "exactly one h1");
+  assert((await text(page, "h1")).includes("reach into"), "headline");
   const links = await page.locator("main a[href^='/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
-  assert(links.length === 3, `expected 3 sim links, got ${links.join(",")}`);
+  assert(links.length === 3, `expected 3 plate links, got ${links.join(",")}`);
+  for (const l of await page.locator("main a").all()) assert(((await l.textContent()) ?? "").trim().length > 3, "link without text");
+  assert((await page.locator("h2").count()) >= 4, "plate headings + index heading");
+  for (const subject of ["Physics", "Chemistry", "Computer Science", "Biology"]) {
+    assert(await page.getByRole("heading", { name: subject }).first().isVisible(), `missing index column ${subject}`);
+  }
+  assert(await page.getByText("N-Body Orbital Mechanics").first().isVisible(), "planned item not shown");
+  assert((await page.locator("a:has-text('N-Body')").count()) === 0, "planned simulations must not be links");
   await page.getByRole("link", { name: /Hodgkin/ }).click();
   await page.waitForURL(/hodgkin-huxley/);
   await page.getByRole("link", { name: "← All simulations" }).click();
@@ -162,11 +172,198 @@ await test("home: renders, groups by subject, links to the 3 available sims", as
   await shot(page, "home");
 });
 
+await test("home: compact — about one screen on desktop, under 1.4 on a phone", async (page) => {
+  const height = async () => page.evaluate(() => document.documentElement.scrollHeight);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(url("/"));
+  await page.waitForTimeout(500);
+  const desktop = (await height()) / 900;
+  assert(desktop <= 1.15, `desktop page is ${desktop.toFixed(2)} screens tall (budget 1.15)`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(300);
+  const phone = (await height()) / 844;
+  assert(phone <= 1.4, `phone page is ${phone.toFixed(2)} screens tall (budget 1.4)`);
+  console.log(`      (desktop ${desktop.toFixed(2)} screens, phone ${phone.toFixed(2)} screens)`);
+});
+
+await test("home: no horizontal overflow at 320, 390, 768, 1024 and 1440 px", async (page) => {
+  for (const width of [320, 390, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(url("/"));
+    await page.waitForTimeout(300);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert(overflow <= 1, `${width}px: horizontal overflow ${overflow}px`);
+  }
+});
+
+await test("home: phone index is collapsed and expands on tap", async (page) => {
+  await page.goto(url("/"));
+  const details = page.locator("details");
+  assert((await details.count()) === 4, "four accordions");
+  assert((await page.locator("details[open]").count()) === 0, "accordions should start collapsed");
+  await page.locator("details summary").first().tap();
+  assert((await page.locator("details[open]").count()) === 1, "tap should open one");
+  assert(await page.getByText("N-Body Orbital Mechanics").last().isVisible(), "item visible after opening");
+}, { context: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
+
+await test("home: does not touch the GPU on load, and stays within size budgets", async (page) => {
+  await page.addInitScript(() => {
+    window.__gpuCalls = 0;
+    if (navigator.gpu) {
+      const original = GPU.prototype.requestAdapter;
+      GPU.prototype.requestAdapter = function (...args) {
+        window.__gpuCalls++;
+        return original.apply(this, args);
+      };
+    }
+  });
+  await page.goto(url("/"), { waitUntil: "networkidle" });
+  await page.waitForTimeout(1500);
+  const calls = await page.evaluate(() => window.__gpuCalls);
+  assert(calls === 0, `home requested a GPU adapter ${calls} time(s) before any interaction`);
+
+  // Sizes are measured by downloading exactly the scripts the page loaded, from Node: deterministic, unlike
+  // reading response bodies inside the browser (which can fail and silently under-count).
+  const scripts = await page.evaluate(() => performance.getEntriesByType("resource").map((e) => e.name).filter((n) => /\.js(\?|$)/.test(n)));
+  const script = (await Promise.all(scripts.map(async (u) => (await (await fetch(u)).arrayBuffer()).byteLength))).reduce((a, b) => a + b, 0);
+  const html = zlib.gzipSync(Buffer.from(await (await fetch(url("/"))).arrayBuffer())).length;
+  // Baseline before the redesign: 456.6 KB (almost all of it the React + Next runtime). Must not grow.
+  assert(IS_DEV || script <= 470 * 1024, `home JavaScript is ${(script / 1024).toFixed(1)} KB over ${scripts.length} files (budget 470 KB; 456.6 KB when the redesign started)`);
+  assert(IS_DEV || html <= 14 * 1024, `home HTML is ${(html / 1024).toFixed(1)} KB gzipped (budget 14 KB)`);
+  console.log(`      (JS ${(script / 1024).toFixed(1)} KB over ${scripts.length} files, HTML ${(html / 1024).toFixed(1)} KB gzipped, GPU adapter requests: ${calls})`);
+});
+
+await test("home: automated accessibility audit (axe) finds no violations, desktop and phone", async (page) => {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto(url("/"));
+    await page.waitForTimeout(800);
+    const result = await new AxeBuilder({ page }).analyze();
+    const summary = result.violations.map((v) => `${v.id} (${v.nodes.length}): ${v.help}`);
+    assert(summary.length === 0, `${viewport.width}px: ${summary.join(" | ")}`);
+  }
+});
+
+// ───────────────────────────── home: live plates ─────────────────────────────
+const PLATES = ["wave-interference", "cellular-automata", "hodgkin-huxley"];
+const liveCanvases = (page) => page.locator("[data-testid=plate-live]");
+const waitLive = (page, id, timeout = 45_000) => page.waitForSelector(`[data-plate="${id}"] [data-testid=plate-live][data-state=ready]`, { timeout });
+/** Fraction of lit pixels in a plate's live canvas (a blank canvas would be ~0). */
+const litFraction = (page, id) =>
+  page.evaluate(async (id) => {
+    const canvas = document.querySelector(`[data-plate="${id}"] canvas`);
+    const blob = await new Promise((resolve) => requestAnimationFrame(() => canvas.toBlob(resolve)));
+    const bitmap = await createImageBitmap(blob);
+    const ctx = new OffscreenCanvas(bitmap.width, bitmap.height).getContext("2d");
+    ctx.drawImage(bitmap, 0, 0);
+    const { data } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    let lit = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i] + data[i + 1] + data[i + 2] > 90) lit++;
+    return lit / (bitmap.width * bitmap.height);
+  }, id);
+
+await test("home plates: hover runs the real simulation (all three), one at a time, and leaving restores the poster", async (page) => {
+  await page.goto(url("/"));
+  assert((await liveCanvases(page).count()) === 0, "no live canvas before any intent");
+  for (const id of PLATES) {
+    await page.locator(`[data-plate="${id}"]`).hover();
+    await waitLive(page, id);
+    assert((await liveCanvases(page).count()) === 1, `${id}: more than one live plate`);
+    assert((await page.locator(`[data-plate="${id}"] img`).count()) === 1, `${id}: poster should stay underneath`);
+    // "ready" arrives a tick before the first frame is presented, so poll for real content.
+    let lit = 0;
+    for (let i = 0; i < 30 && lit <= 0.01; i++) {
+      lit = await litFraction(page, id);
+      if (lit <= 0.01) await page.waitForTimeout(300);
+    }
+    assert(lit > 0.01, `${id}: live canvas looks blank (lit fraction ${lit.toFixed(4)})`);
+  }
+  // Moving from the last plate to the first hands over: the first starts, the last stops.
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await waitLive(page, PLATES[0]);
+  await page.waitForFunction((id) => document.querySelectorAll(`[data-plate="${id}"] canvas`).length === 0, PLATES[2], { timeout: 10_000 });
+  assert((await liveCanvases(page).count()) === 1, "exactly one live canvas after hand-over");
+  await page.mouse.move(5, 5);
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=plate-live]").length === 0, null, { timeout: 10_000 });
+  await shot(page, "home-live");
+});
+
+await test("home plates: keyboard focus starts the live preview", async (page) => {
+  await page.goto(url("/"));
+  await page.keyboard.press("Tab"); // masthead has no links; the first tab stop is the first plate
+  const focused = await page.evaluate(() => document.activeElement?.getAttribute("data-plate"));
+  assert(focused === PLATES[0], `first tab stop is ${focused}`);
+  await waitLive(page, PLATES[0]);
+  await page.keyboard.press("Tab");
+  await waitLive(page, PLATES[1]);
+  await page.waitForFunction((id) => document.querySelectorAll(`[data-plate="${id}"] canvas`).length === 0, PLATES[0], { timeout: 10_000 });
+});
+
+await test("home plates: reduced motion never starts a preview and never requests the GPU", async (page) => {
+  await page.addInitScript(() => {
+    window.__gpuCalls = 0;
+    const original = GPU.prototype.requestAdapter;
+    GPU.prototype.requestAdapter = function (...args) {
+      window.__gpuCalls++;
+      return original.apply(this, args);
+    };
+  });
+  await page.goto(url("/"));
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await page.waitForTimeout(3000);
+  assert((await liveCanvases(page).count()) === 0, "live preview started despite prefers-reduced-motion");
+  assert((await page.evaluate(() => window.__gpuCalls)) === 0, "GPU was requested despite prefers-reduced-motion");
+  assert(await page.locator(`[data-plate="${PLATES[0]}"] img`).isVisible(), "poster should remain");
+}, { context: { reducedMotion: "reduce" } });
+
+await test("home plates: without WebGPU hovering does nothing and raises no errors", async (page) => {
+  await page.goto(url("/"));
+  await page.locator(`[data-plate="${PLATES[1]}"]`).hover();
+  await page.waitForTimeout(2000);
+  assert((await liveCanvases(page).count()) === 0, "preview started without WebGPU");
+  assert(await page.locator(`[data-plate="${PLATES[1]}"] img`).isVisible(), "poster should remain");
+}, { initScript: () => Object.defineProperty(Navigator.prototype, "gpu", { get: () => undefined, configurable: true }) });
+
+await test("home plates: a GPU failure falls back to the poster and is not retried", async (page) => {
+  await page.addInitScript(() => {
+    window.__gpuCalls = 0;
+    GPU.prototype.requestAdapter = async function () {
+      window.__gpuCalls++;
+      return null; // WebGPU exists but yields no adapter, as on some blocklisted machines
+    };
+  });
+  await page.goto(url("/"));
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await page.waitForFunction(() => window.__gpuCalls >= 1, null, { timeout: 15_000 });
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=plate-live]").length === 0, null, { timeout: 10_000 });
+  assert(await page.locator(`[data-plate="${PLATES[0]}"] img`).isVisible(), "poster should remain after a failure");
+  const calls = await page.evaluate(() => window.__gpuCalls);
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(400);
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await page.waitForTimeout(1500);
+  assert((await page.evaluate(() => window.__gpuCalls)) === calls, "a failed preview must not be retried on every hover");
+});
+
+await test("home plates: scrolling a live plate out of view stops it", async (page) => {
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await page.goto(url("/"));
+  await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
+  await waitLive(page, PLATES[0]);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=plate-live]").length === 0, null, { timeout: 10_000 });
+});
+
 await test("routes: unknown simulations return 404", async (page) => {
   for (const p of ["/physics/nope", "/chemistry/titration", "/biology/wave-interference"]) {
     const res = await page.goto(url(p));
     assert(res.status() === 404, `${p} -> ${res.status()}`);
   }
+  // The 404 page is on-brand, explains itself, offers the way home and passes the accessibility audit.
+  assert((await text(page, "h1")).includes("doesn’t exist"), "404 headline");
+  assert(await page.getByRole("link", { name: "← All simulations" }).isVisible(), "404 should link home");
+  const violations = (await new AxeBuilder({ page }).analyze()).violations.map((v) => `${v.id}: ${v.help}`);
+  assert(violations.length === 0, `404 page a11y: ${violations.join(" | ")}`);
 }, { allowErrors: [/404/] });
 
 // ───────────────────────────── wave interference ─────────────────────────────
@@ -197,12 +394,15 @@ await test("wave: copy link, save image (non-blank PNG)", async (page) => {
   await page.getByRole("button", { name: "Copy link" }).click();
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   assert(clip === page.url() && clip.includes("mode=two-points"), `clipboard: ${clip}`);
-  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Save image" }).click()]);
-  const file = path.join(os.tmpdir(), `edusim-${Date.now()}.png`);
-  await download.saveAs(file);
-  const size = fs.statSync(file).size;
-  fs.rmSync(file);
-  assert(download.suggestedFilename().endsWith(".png") && size > 20_000, `PNG too small (blank?): ${size}B`);
+  // Repeated, because a snapshot taken in a tick the (deliberately skipping) render loop did not draw would be blank.
+  for (let i = 1; i <= 4; i++) {
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Save image" }).click()]);
+    const file = path.join(os.tmpdir(), `edusim-${Date.now()}-${i}.png`);
+    await download.saveAs(file);
+    const size = fs.statSync(file).size;
+    fs.rmSync(file);
+    assert(download.suggestedFilename().endsWith(".png") && size > 20_000, `download ${i}: PNG too small (blank?): ${size}B`);
+  }
 });
 
 await test("wave: detector graph, fringe measurement matches theory, probe, ruler, drag", async (page) => {
