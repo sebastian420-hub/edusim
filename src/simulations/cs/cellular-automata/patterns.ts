@@ -5,6 +5,18 @@ export type Pattern = {
 
 export const patterns: Pattern[] = [
   {
+    name: "Block",
+    points: [[0, 0], [1, 0], [0, 1], [1, 1]],
+  },
+  {
+    name: "Blinker",
+    points: [[0, 0], [1, 0], [2, 0]],
+  },
+  {
+    name: "Toad",
+    points: [[1, 0], [2, 0], [3, 0], [0, 1], [1, 1], [2, 1]],
+  },
+  {
     name: "Glider",
     points: [
       [1, 0],

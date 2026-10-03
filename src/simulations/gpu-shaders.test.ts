@@ -3,6 +3,9 @@ import { compute, effect, pingPongStorage, storage, target } from "vgpu/node";
 import { tryInitGpu } from "@/test/gpu";
 import type { NodeGpu } from "@/test/gpu";
 import computeShader from "./cs/cellular-automata/compute.wgsl";
+import countShader from "./cs/cellular-automata/count.wgsl";
+import { countAlive, stateHash, stepLife } from "./cs/cellular-automata/life";
+import { STATS_SLOTS } from "./cs/cellular-automata/sim-constants";
 import { workgroupsFor } from "./cs/cellular-automata/workgroup";
 import neuronShader from "./biology/hodgkin-huxley/neuron.wgsl";
 import waveShader from "./physics/wave-interference/wave.wgsl";
@@ -209,4 +212,49 @@ fn probe(@builtin(global_invocation_id) id: vec3u) {
       });
     });
   }
+});
+
+describe("Cellular automata count/fingerprint shader vs CPU twin", () => {
+  needsGpu("matches the CPU count and fingerprint for random soups, several slots, on a non-multiple-of-8 grid", async (gpu) => {
+    // 70 is not a multiple of the 8x8 workgroup, so the bounds check and partial workgroups are exercised.
+    const size = 70;
+    const cells = storage(gpu, size * size * 4);
+    const stats = storage(gpu, STATS_SLOTS * 8);
+    const pass = compute(gpu, countShader);
+    let seed = 12345;
+    const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+
+    for (const slot of [0, 7, STATS_SLOTS - 1]) {
+      const grid = new Uint32Array(size * size);
+      for (let i = 0; i < grid.length; i++) grid[i] = random() < 0.3 ? 1 : 0;
+      cells.write(grid);
+      (stats as unknown as { write(d: BufferSource, offset: number): void }).write(new Uint32Array([0, 0]), slot * 8);
+      pass.set({ cells, stats, params: { width: size, height: size, slot, pad: 0 } }).dispatch(workgroupsFor(size), workgroupsFor(size), 1);
+      const ring = new Uint32Array(await stats.read());
+      expect(ring[slot * 2], `count in slot ${slot}`).toBe(countAlive(grid));
+      expect(ring[slot * 2 + 1], `fingerprint in slot ${slot}`).toBe(stateHash(grid));
+    }
+  });
+
+  needsGpu("fingerprints agree with the CPU after real generations (compute shader + count shader together)", async (gpu) => {
+    const size = 32;
+    const rule = { birth: 0b1000, survive: 0b1100 };
+    const cells = pingPongStorage(gpu, size * size * 4);
+    const stats = storage(gpu, STATS_SLOTS * 8);
+    const step = compute(gpu, computeShader);
+    const count = compute(gpu, countShader);
+    let grid = new Uint32Array(size * size);
+    for (const [x, y] of [[1, 0], [2, 1], [0, 2], [1, 2], [2, 2], [10, 10], [11, 10], [12, 10]]) grid[y * size + x] = 1; // glider + blinker
+    cells.read.write(grid);
+    for (let g = 1; g <= 6; g++) {
+      step.set({ cellsIn: cells.read, cellsOut: cells.write, params: { width: size, height: size, rule_birth: rule.birth, rule_survive: rule.survive } }).dispatch(workgroupsFor(size), workgroupsFor(size), 1);
+      cells.swap();
+      grid = stepLife(grid, size, size, rule.birth, rule.survive);
+      (stats as unknown as { write(d: BufferSource, offset: number): void }).write(new Uint32Array([0, 0]), g * 8);
+      count.set({ cells: cells.read, stats, params: { width: size, height: size, slot: g, pad: 0 } }).dispatch(workgroupsFor(size), workgroupsFor(size), 1);
+      const ring = new Uint32Array(await stats.read());
+      expect(ring[g * 2], `count after generation ${g}`).toBe(countAlive(grid));
+      expect(ring[g * 2 + 1], `fingerprint after generation ${g}`).toBe(stateHash(grid));
+    }
+  });
 });

@@ -1,7 +1,9 @@
 # EduSim improvement roadmap
 
 Status: the foundation is stable (shared GPU runtime, three working simulations, registry routing,
-unit + headless-GPU tests, shader validation, browser smoke test). This plan covers what comes next.
+unit + headless-GPU tests, shader validation, browser smoke test) and **all three simulations now meet the same
+bar** — shareable settings, a measurement the tests prove correct, and three guided challenges (phases C, D and E
+below). What remains is touch/phone polish (phase B) and new simulations (phase F).
 EduSim runs **locally** for now, so nothing below depends on hosting.
 
 ## Guiding principles
@@ -54,7 +56,7 @@ one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessi
   shows (e.g. "Firing at 68 Hz", "Generation 120, 412 live cells"), colour-blind-safe CA themes and
   HH trace colours, respect `prefers-reduced-motion` (start paused).
 
-## Phase C — Shareable & persistent state (1 day) · ✅ Wave + Hodgkin–Huxley (CA next)
+## Phase C — Shareable & persistent state (1 day) · ✅ done for all three simulations
 
 - **State in the URL** for every sim (`?mode=double-slit&separation=0.8…`), parsed and clamped by a
   small typed schema per sim, so a configuration is a link — also the mechanism challenges use to set
@@ -63,7 +65,10 @@ one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessi
 - **Remember last settings** per sim in `localStorage` (URL wins when present).
 - **Save image** (PNG of the current canvas) for worksheets and reports.
 
-## Phase D — Measurement tools & linked representations (3–5 days) · the core pedagogy · ✅ Wave + Hodgkin–Huxley (CA next)
+Cellular automata links reproduce the rules, grid size, speed, colours and the **starting pattern** (a library
+pattern, a fresh random soup or an empty grid) — not cells drawn by hand, which would not fit in a link.
+
+## Phase D — Measurement tools & linked representations (3–5 days) · the core pedagogy · ✅ done for all three simulations
 
 Shared building blocks: a small `MiniChart` component (SVG, theme-aware) and a "probe" pattern —
 CPU twin for analytic sims, async GPU read-back for state-based ones.
@@ -82,13 +87,18 @@ CPU twin for analytic sims, async GPU read-back for state-based ones.
   vs current — shows threshold and rheobase.
 - Optional **phase-plane view** (V vs n) as a second representation.
 
-**Cellular automata**
-- **Population graph** over generations (GPU reduction or periodic read-back every N generations).
-- Live-cell count and simple **period detection** (still life / oscillator / chaotic).
+**Cellular automata** · ✅
+- **Population graph** over the last 240 generations and a live-cell count. A reduction shader (`count.wgsl`)
+  counts the live cells and computes an order-independent fingerprint of the whole grid for every generation,
+  into a ring buffer; the page reads it back at most ten times a second, so the cost does not grow with speed.
+- **Pattern detection** (`tracker.ts`): *extinct*, *still life*, *oscillator with its period*, *moving pattern*
+  (a glider or spaceship: the population repeats but the fingerprint never does) or *evolving*. The shader is
+  tested against a CPU twin (`life.ts`) cell for cell, and the classifier against block, blinker, toad,
+  pulsar, glider and the Gosper gun.
 
 Done when: each sim has at least one quantitative readout that a test asserts is correct.
 
-## Phase E — Guided experiments (3–4 days) · ✅ framework + 3 Wave + 3 Hodgkin–Huxley challenges
+## Phase E — Guided experiments (3–4 days) · ✅ framework + 3 challenges for each simulation
 
 A data-driven **Challenges** tab in the sidebar (Explore | Challenges), optional by design.
 
@@ -98,6 +108,11 @@ A data-driven **Challenges** tab in the sidebar (Explore | Challenges), optional
 - Goal checks use the Phase D readouts (e.g. "make the fringes twice as far apart", "find the smallest
   current that makes the neuron fire repeatedly", "build a pattern that survives 100 generations").
 - Progress saved locally; 3–5 challenges per sim to start.
+
+Cellular automata: *build something that never changes* (a still life), *make it blink* (an oscillator) and
+*grow without limit* (the Gosper glider gun's population passes 100). Each goal reads the GPU-measured status, so
+it cannot be met by a shortcut (changing the rules, or a dense random soup), and every claim in the explanations is
+asserted against the CPU twin in `challenges.test.ts`.
 
 ## Phase F — New simulations (1–3 days each)
 
@@ -132,8 +147,9 @@ explanation text, at least one measurement tool and a few challenges.
 1. **Phase A** (small, protects everything after it).
 2. **Vertical slice on Wave Interference:** Phase B polish + Phase C URL state + Phase D detector
    screen/ruler + Phase E with 3 challenges. This proves the whole learning loop on one sim.
-3. Roll the same pattern out to Hodgkin–Huxley and Cellular Automata.
-4. Then new simulations (Phase F), starting with the double pendulum.
+3. ✅ Roll the same pattern out to Hodgkin–Huxley and Cellular Automata.
+4. Then phone/touch and accessibility polish (the rest of Phase B), then new simulations (Phase F), starting
+   with the double pendulum.
 
 ## Risks
 
