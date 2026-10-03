@@ -27,6 +27,11 @@ interface SimLayoutProps {
   onResetDefaults?: () => void;
   /** Start in the playing state (default true). */
   initiallyPlaying?: boolean;
+  /**
+   * Makes the play/pause state the page's to own (it is then kept in sync with `onPlayPause`). Useful when
+   * something other than the buttons can pause the simulation, such as a challenge that sets up an experiment.
+   */
+  playing?: boolean;
   onPlayPause?: (playing: boolean) => void;
   onReset?: () => void;
   /** When provided a Step button is shown; stepping pauses the simulation. */
@@ -62,11 +67,13 @@ export function SimLayout({
   quality = 1,
   onResetDefaults,
   initiallyPlaying = true,
+  playing: controlledPlaying,
   onPlayPause,
   onReset,
   onStep,
 }: SimLayoutProps) {
-  const [playing, setPlaying] = useState(initiallyPlaying);
+  const [ownPlaying, setOwnPlaying] = useState(initiallyPlaying);
+  const playing = controlledPlaying ?? ownPlaying;
   const [tab, setTab] = useState<"explanation" | "challenges">("explanation");
   const [notice, setNotice] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -80,7 +87,7 @@ export function SimLayout({
   };
 
   const setPlayingState = (next: boolean) => {
-    setPlaying(next);
+    setOwnPlaying(next);
     onPlayPause?.(next);
   };
 

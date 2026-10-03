@@ -1,13 +1,25 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent, WheelEvent } from "react";
+import { ChallengesPanel } from "@/components/ChallengesPanel";
+import { MiniChart } from "@/components/MiniChart";
 import { ParameterSlider } from "@/components/ParameterSlider";
 import { SimLayout } from "@/components/SimLayout";
 import { useGpuSim } from "@/lib/gpu/useGpuSim";
-import { createCellularAutomata, GRID_SIZES } from "./sim";
-import type { CellularAutomataHandle, CellularAutomataParams } from "./sim";
-import { DEFAULT_PATTERN, patterns } from "./patterns";
+import { usePersistedParams } from "@/lib/usePersistedParams";
+import { CA_CHALLENGES } from "./challenges";
+import { niceMax } from "./graph";
+import { patterns } from "./patterns";
 import { RULE_PRESETS } from "./rules";
+import { CA_DEFAULTS, CA_SCHEMA, sanitizeRuleDigits, THEMES } from "./settings";
+import type { CASettings } from "./settings";
+import { createCellularAutomata } from "./sim";
+import type { CellularAutomataHandle, CellularAutomataStats } from "./sim";
+import { GRID_SIZES } from "./sim-constants";
+import { describeStatus } from "./tracker";
+import type { PatternStatus } from "./tracker";
+
+const SIM_ID = "cellular-automata";
 
 type Tool = "pan" | "draw" | "erase";
 
@@ -17,38 +29,72 @@ const TOOLS: { id: Tool; label: string }[] = [
   { id: "erase", label: "Erase" },
 ];
 
+const THEME_NAMES = ["Classic Green", "Cyberpunk Neon", "Minimal White", "Amber"];
+
 const selectClass = "rounded border border-slate-700 bg-slate-800 p-2 text-sm text-slate-200";
+
+/** What challenges see while there is no measurement yet (just after a restart): nothing can be solved by it. */
+const NO_STATS: CellularAutomataStats = { generation: 0, population: 0, cells: 0, gens: [], counts: [], status: { kind: "evolving" } };
+
+const STATUS_TONE: Record<PatternStatus["kind"], string> = {
+  empty: "text-red-300",
+  still: "text-green-300",
+  oscillator: "text-green-300",
+  moving: "text-green-300",
+  evolving: "text-slate-300",
+};
+
+/** Puts the simulation into the starting state that a `pattern` setting names. */
+function startFrom(sim: CellularAutomataHandle, pattern: string) {
+  if (pattern === "random") sim.randomize();
+  else if (pattern === "clear") sim.clear();
+  else sim.loadPattern(pattern);
+}
 
 export default function CellularAutomataControls() {
   const [generation, setGeneration] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [stats, setStats] = useState<CellularAutomataStats | null>(null);
   // The factory must be stable, so it is created once and closes over the React state setters.
   const [factory] = useState(
     () => (ctx: Parameters<typeof createCellularAutomata>[0]) =>
-      createCellularAutomata(ctx, { onGeneration: setGeneration, onZoom: setZoom }),
+      createCellularAutomata(ctx, { onGeneration: setGeneration, onZoom: setZoom, onStats: setStats }),
   );
   const { canvasRef, status, sim, quality } = useGpuSim<CellularAutomataHandle>(factory);
 
-  const [params, setParams] = useState<Pick<CellularAutomataParams, "birth" | "survive" | "speed" | "theme">>({
-    birth: "3",
-    survive: "23",
-    speed: 10,
-    theme: 0,
-  });
-  const [gridSize, setGridSize] = useState<number>(256);
+  const [settings, setSettings] = usePersistedParams(SIM_ID, CA_SCHEMA, CA_DEFAULTS);
   const [tool, setTool] = useState<Tool>("pan");
+  const [playing, setPlaying] = useState(false);
   const dragging = useRef(false);
   const lastPointer = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    sim?.setParams(params);
-  }, [sim, params]);
+    sim?.setParams({ birth: settings.birth, survive: settings.survive, speed: settings.speed, theme: settings.theme });
+  }, [sim, settings.birth, settings.survive, settings.speed, settings.theme]);
 
   useEffect(() => {
-    sim?.setGridSize(gridSize);
-  }, [sim, gridSize]);
+    sim?.setGridSize(settings.gridSize);
+  }, [sim, settings.gridSize]);
 
-  const update = (patch: Partial<typeof params>) => setParams((prev) => ({ ...prev, ...patch }));
+  useEffect(() => {
+    if (sim) startFrom(sim, settings.pattern);
+  }, [sim, settings.pattern]);
+
+  useEffect(() => {
+    if (playing) sim?.play();
+    else sim?.pause();
+  }, [sim, playing]);
+
+  const update = (patch: Partial<CASettings>) => setSettings((prev) => ({ ...prev, ...patch }));
+
+  /**
+   * Changes settings. A new starting pattern reaches the simulation through the effect above, but choosing the
+   * pattern that is already selected changes no state, so that case restarts it by hand.
+   */
+  const apply = (patch: Partial<CASettings>) => {
+    update(patch);
+    if (sim && patch.pattern !== undefined && patch.pattern === settings.pattern) startFrom(sim, patch.pattern);
+  };
 
   const local = (e: PointerEvent | WheelEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -89,6 +135,13 @@ export default function CellularAutomataControls() {
     sim?.zoomAt(e.deltaY > 0 ? 0.9 : 1.1, p.x, p.y);
   };
 
+  const presetName =
+    RULE_PRESETS.find(
+      (r) => sanitizeRuleDigits(r.birth) === sanitizeRuleDigits(settings.birth) && sanitizeRuleDigits(r.survive) === sanitizeRuleDigits(settings.survive),
+    )?.name ?? "";
+
+  const series = stats && stats.counts.length > 1 ? stats : null;
+
   const controls = (
     <>
       <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-800/50 p-3">
@@ -96,11 +149,18 @@ export default function CellularAutomataControls() {
         <span className="font-mono text-xl text-green-400">{generation}</span>
       </div>
 
-      <ParameterSlider label="Speed" unit=" gen/s" min={1} max={60} step={1} color="green" value={params.speed} onChange={(v) => update({ speed: v })} />
+      <ParameterSlider label="Speed" unit=" gen/s" min={1} max={60} step={1} color="green" value={settings.speed} onChange={(v) => update({ speed: v })} />
 
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium text-slate-200">Grid size</span>
-        <select value={gridSize} onChange={(e) => setGridSize(Number(e.target.value))} className={selectClass}>
+        <select
+          value={settings.gridSize}
+          onChange={(e) => {
+            const size = GRID_SIZES.find((s) => String(s) === e.target.value);
+            if (size) update({ gridSize: size });
+          }}
+          className={selectClass}
+        >
           {GRID_SIZES.map((s) => (
             <option key={s} value={s}>
               {s} × {s}
@@ -120,7 +180,7 @@ export default function CellularAutomataControls() {
                 <input
                   type="text"
                   inputMode="numeric"
-                  value={params[key]}
+                  value={settings[key]}
                   onChange={(e) => update({ [key]: e.target.value.replace(/[^0-8]/g, "") })}
                   className="w-full rounded border border-slate-700 bg-slate-800 p-1.5 font-mono text-sm text-slate-200"
                 />
@@ -130,14 +190,14 @@ export default function CellularAutomataControls() {
         </div>
         <select
           aria-label="Rule preset"
-          value=""
+          value={presetName}
           onChange={(e) => {
             const preset = RULE_PRESETS.find((r) => r.name === e.target.value);
             if (preset) update({ birth: preset.birth, survive: preset.survive });
           }}
           className={`mt-2 w-full ${selectClass}`}
         >
-          <option value="">Rule presets…</option>
+          <option value="">Custom rule</option>
           {RULE_PRESETS.map((r) => (
             <option key={r.name} value={r.name}>
               {r.name} (B{r.birth}/S{r.survive})
@@ -147,22 +207,26 @@ export default function CellularAutomataControls() {
       </fieldset>
 
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium text-slate-200">Pattern library</span>
-        <select value="" onChange={(e) => e.target.value && sim?.loadPattern(e.target.value)} className={selectClass}>
-          <option value="">Load pattern…</option>
-          {patterns.map((p) => (
-            <option key={p.name} value={p.name}>
-              {p.name}
-            </option>
-          ))}
+        <span className="text-sm font-medium text-slate-200">Starting pattern</span>
+        <select value={settings.pattern} onChange={(e) => apply({ pattern: e.target.value })} className={selectClass}>
+          <optgroup label="Pattern library">
+            {patterns.map((p) => (
+              <option key={p.name} value={p.name}>
+                {p.name}
+              </option>
+            ))}
+          </optgroup>
+          <option value="random">Random soup</option>
+          <option value="clear">Empty grid</option>
         </select>
+        <span className="text-xs text-slate-500">Reset (R) starts over from it.</span>
       </label>
 
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={() => sim?.clear()} className="rounded bg-red-900/50 px-3 py-2 text-sm font-medium text-red-200 transition-colors hover:bg-red-800/50">
+        <button type="button" onClick={() => apply({ pattern: "clear" })} className="rounded bg-red-900/50 px-3 py-2 text-sm font-medium text-red-200 transition-colors hover:bg-red-800/50">
           Clear
         </button>
-        <button type="button" onClick={() => sim?.randomize()} className="rounded bg-slate-700 px-3 py-2 text-sm font-medium text-slate-100 transition-colors hover:bg-slate-600">
+        <button type="button" onClick={() => apply({ pattern: "random" })} className="rounded bg-slate-700 px-3 py-2 text-sm font-medium text-slate-100 transition-colors hover:bg-slate-600">
           Random
         </button>
       </div>
@@ -188,13 +252,47 @@ export default function CellularAutomataControls() {
 
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium text-slate-200">Color theme</span>
-        <select value={params.theme} onChange={(e) => update({ theme: Number(e.target.value) })} className={selectClass}>
-          <option value={0}>Classic Green</option>
-          <option value={1}>Cyberpunk Neon</option>
-          <option value={2}>Minimal White</option>
-          <option value={3}>Amber</option>
+        <select
+          value={settings.theme}
+          onChange={(e) => {
+            const theme = THEMES.find((t) => String(t) === e.target.value);
+            if (theme !== undefined) update({ theme });
+          }}
+          className={selectClass}
+        >
+          {THEMES.map((t) => (
+            <option key={t} value={t}>
+              {THEME_NAMES[t]}
+            </option>
+          ))}
         </select>
       </label>
+
+      <fieldset className="space-y-3 border-t border-slate-800 pt-4">
+        <legend className="text-sm font-semibold text-slate-200">Measure</legend>
+        <label className="flex items-center gap-2 text-sm text-slate-300">
+          <input type="checkbox" checked={settings.showGraph} onChange={(e) => update({ showGraph: e.target.checked })} />
+          Population graph
+        </label>
+        {settings.showGraph &&
+          (series ? (
+            <>
+              <MiniChart
+                title="Live cells per generation"
+                xLabel="generation"
+                yLabel="live cells"
+                x={series.gens}
+                y={series.counts}
+                yMax={niceMax(Math.max(...series.counts))}
+                point={{ x: series.gens[series.gens.length - 1], y: series.counts[series.counts.length - 1] }}
+                summary={`${series.population} live cells now. ${describeStatus(series.status)}.`}
+              />
+              <p className="text-xs text-slate-400">The last {series.gens.length} generations. The dot marks now.</p>
+            </>
+          ) : (
+            <p className="text-xs text-slate-500">Press Play or Step to start recording the population.</p>
+          ))}
+      </fieldset>
     </>
   );
 
@@ -209,8 +307,14 @@ export default function CellularAutomataControls() {
         Every cell updates at once, which is why this runs well on the GPU: one compute shader invocation per
         cell, millions of cells per generation. The grid wraps around like a torus.
       </p>
+      <p>
+        <strong className="text-slate-100">Measure it.</strong> The GPU also counts the live cells every
+        generation, and the panel on the canvas names what it sees: a still life, an oscillator and its period,
+        or a moving pattern such as a glider.
+      </p>
       <p className="text-slate-400">
-        Pick the Draw or Erase tool to edit cells. Scroll to zoom at the cursor. Default pattern: {DEFAULT_PATTERN}.
+        Pick the Draw or Erase tool to edit cells. Scroll to zoom at the cursor. Copy link shares the rules,
+        grid, speed, colours and starting pattern — not cells you draw by hand.
       </p>
     </>
   );
@@ -224,8 +328,28 @@ export default function CellularAutomataControls() {
       quality={quality}
       controls={controls}
       explanation={explanation}
-      initiallyPlaying={false}
-      onPlayPause={(playing) => (playing ? sim?.play() : sim?.pause())}
+      challenges={
+        <ChallengesPanel
+          simId={SIM_ID}
+          challenges={CA_CHALLENGES}
+          params={settings}
+          readouts={stats ?? NO_STATS}
+          onSetup={(patch) => {
+            setStats(null); // measurements of the previous experiment must not count towards this one
+            setPlaying(false); // start paused: arrange the cells, then press Play
+            if (patch.pattern === "clear") setTool("draw");
+            apply(patch);
+          }}
+        />
+      }
+      canvasRef={canvasRef}
+      onResetDefaults={() => {
+        setTool("pan");
+        setPlaying(false);
+        apply(CA_DEFAULTS);
+      }}
+      playing={playing}
+      onPlayPause={setPlaying}
       onStep={() => sim?.step()}
       onReset={() => sim?.reset()}
     >
@@ -238,9 +362,22 @@ export default function CellularAutomataControls() {
         onPointerCancel={endDrag}
         onWheel={onWheel}
       />
+
+      {/* Population and what the history says about the pattern, measured on the GPU */}
+      <div className="pointer-events-none absolute left-3 top-3 max-w-[55%] rounded bg-black/60 px-2.5 py-1.5 font-mono text-[11px] leading-snug text-slate-200">
+        <div className="text-slate-400">Population</div>
+        <div className="text-base font-bold text-green-300" data-testid="ca-population">
+          {stats ? stats.population.toLocaleString("en-US") : "—"}
+        </div>
+        <div aria-live="polite" data-testid="ca-status" className={stats ? STATUS_TONE[stats.status.kind] : "text-slate-400"}>
+          {stats ? describeStatus(stats.status) : "Measuring…"}
+        </div>
+        {stats?.status.kind === "empty" && <div className="text-slate-500">Draw cells or pick a pattern.</div>}
+      </div>
+
       <div className="pointer-events-none absolute right-3 top-3 flex gap-4 rounded border border-slate-800 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-400 backdrop-blur">
         <span>Zoom: {zoom.toFixed(2)}×</span>
-        <span>{tool === "pan" ? "Drag to pan · scroll to zoom" : tool === "draw" ? "Drag to draw cells" : "Drag to erase cells"}</span>
+        <span className="hidden sm:inline">{tool === "pan" ? "Drag to pan · scroll to zoom" : tool === "draw" ? "Drag to draw cells" : "Drag to erase cells"}</span>
       </div>
     </SimLayout>
   );

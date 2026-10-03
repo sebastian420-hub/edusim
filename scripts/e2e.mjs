@@ -18,6 +18,8 @@ const BASE_URL = (process.env.BASE_URL ?? "http://localhost:3000").replace(/\/$/
 const SHOTS = process.env.SHOTS_DIR; // optional: save screenshots here
 // Set E2E_DEV=1 when testing `next dev`: its bundles are unminified, so the size budgets do not apply.
 const IS_DEV = process.env.E2E_DEV === "1";
+// E2E_GREP=<regex> runs only the scenarios whose name matches (handy while working on one simulation).
+const GREP = process.env.E2E_GREP ? new RegExp(process.env.E2E_GREP, "i") : undefined;
 // Static exports use trailing slashes; harmless elsewhere.
 const url = (p) => `${BASE_URL}${p}`;
 
@@ -39,6 +41,7 @@ const IGNORED_ERRORS = [/WebGPU is experimental/i, /Download the React DevTools/
 
 /** Runs `body` in a fresh page; fails the test on any console error or uncaught exception. */
 async function test(name, body, { context = {}, initScript, allowErrors = [], adaptive = false } = {}) {
+  if (GREP && !GREP.test(name)) return;
   const ctx = await browser.newContext({
     viewport: { width: 1360, height: 860 },
     acceptDownloads: true,
@@ -700,6 +703,35 @@ await test("hodgkin-huxley: challenge flow (TTX) cannot be solved by removing th
 
 // ───────────────────────────── cellular automata ─────────────────────────────
 const generation = async (page) => Number((await text(page, "text=Generation >> xpath=following-sibling::span")).trim());
+const caStatus = async (page) => (await text(page, "[data-testid=ca-status]")).trim();
+const caPopulation = async (page) => {
+  const t = (await text(page, "[data-testid=ca-population]")).trim();
+  return t === "—" ? NaN : Number(t.replace(/,/g, ""));
+};
+/** Waits until the GPU-measured status line matches (the measurement arrives a moment after the cells change). */
+const waitStatus = (page, re, timeout = 30_000) =>
+  page.waitForFunction((src) => new RegExp(src).test(document.querySelector("[data-testid=ca-status]")?.textContent ?? ""), re.source, { timeout });
+const waitPopulation = (page, expected, timeout = 30_000) =>
+  page.waitForFunction((n) => Number((document.querySelector("[data-testid=ca-population]")?.textContent ?? "").replace(/,/g, "")) === n, expected, { timeout });
+/**
+ * Zooms in around the middle of the canvas, where grid cell (128, 128) meets its neighbours, and returns that
+ * point plus the on-screen size of one cell, so a test can click exactly on cells.
+ */
+async function zoomToCells(page, wheelEvents = 20) {
+  const box = await page.locator("canvas").boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy);
+  for (let i = 0; i < wheelEvents; i++) await page.mouse.wheel(0, -100);
+  await page.waitForTimeout(300);
+  const zoom = parseFloat((await text(page, "text=/Zoom:/")).match(/Zoom: ([\d.]+)/)[1]);
+  return { cx, cy, cell: (Math.min(box.width, box.height) / 256) * zoom };
+}
+async function clickAt(page, x, y) {
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.up();
+}
 
 await test("cellular-automata: play, pause, step, reset", async (page) => {
   await open(page, "/cs/cellular-automata");
@@ -723,6 +755,7 @@ await test("cellular-automata: play, pause, step, reset", async (page) => {
 await test("cellular-automata: draw and erase strokes, wheel zoom, pan, grid sizes, rules", async (page) => {
   await open(page, "/cs/cellular-automata");
   await page.getByRole("button", { name: "Clear" }).click();
+  await waitStatus(page, /^Extinct$/); // the on-canvas population panel is part of the picture: let it catch up
   const empty = await settle(page);
   const box = await page.locator("canvas").boundingBox();
   const stroke = async () => {
@@ -738,6 +771,7 @@ await test("cellular-automata: draw and erase strokes, wheel zoom, pan, grid siz
   await stroke();
   // Back to the Pan tool first: the on-canvas caption changes with the tool and is part of the image.
   await page.getByRole("button", { name: "Pan", exact: true }).click();
+  await waitStatus(page, /^Extinct$/);
   assert(await same(page, empty, await settle(page)), "erasing the same stroke did not restore the empty grid");
 
   await page.mouse.move(box.x + 400, box.y + 300);
@@ -764,6 +798,182 @@ await test("cellular-automata: Gosper gun is alive after 100 generations (rule c
   await page.getByRole("button", { name: "Play" }).click();
   await page.waitForFunction(() => /Generation\s*\n?\s*(\d+)/.test(document.body.innerText) && Number(document.body.innerText.match(/Generation\s*\n?\s*(\d+)/)[1]) >= 100, null, { timeout: 30_000 });
   assert(!await same(page, before, await canvasPixels(page)), "pattern did not evolve");
+});
+
+await test("cellular-automata: URL state, restore, defaults, copy link, save image", async (page) => {
+  await open(page, "/cs/cellular-automata?speed=30&gridSize=512&theme=3&birth=36&pattern=Pulsar&showGraph=0");
+  assert((await slider(page, "Speed").inputValue()) === "30", "speed from URL");
+  assert((await page.getByLabel("Grid size").inputValue()) === "512", "grid size from URL");
+  assert((await page.getByLabel("Color theme").inputValue()) === "3", "theme from URL");
+  assert((await page.getByLabel("Starting pattern").inputValue()) === "Pulsar", "starting pattern from URL");
+  assert((await page.locator("input[inputmode=numeric]").first().inputValue()) === "36", "birth rule from URL");
+  assert((await page.locator("select[aria-label='Rule preset']").inputValue()) === "HighLife", "matching rule preset not shown");
+  assert(!(await page.getByLabel("Population graph").isChecked()), "graph switch from URL");
+  assert((await generation(page)) === 0, "a shared link starts at generation 0");
+  await waitPopulation(page, 48); // the Pulsar has 48 cells
+  await slider(page, "Speed").fill("45");
+  await page.waitForTimeout(200);
+  assert(page.url().includes("speed=45") && page.url().includes("pattern=Pulsar"), `URL not updated: ${page.url()}`);
+  await page.goto(url("/cs/cellular-automata"));
+  await page.locator("canvas").waitFor();
+  assert((await slider(page, "Speed").inputValue()) === "45", "settings not restored from storage");
+  assert((await page.getByLabel("Starting pattern").inputValue()) === "Pulsar", "starting pattern not restored");
+  await page.getByRole("button", { name: "Copy link" }).click();
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  assert(clip === page.url() && clip.includes("birth=36"), `clipboard: ${clip}`);
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Save image" }).click()]);
+  const file = path.join(os.tmpdir(), `edusim-ca-${Date.now()}.png`);
+  await download.saveAs(file);
+  const size = fs.statSync(file).size;
+  fs.rmSync(file);
+  assert(size > 10_000, `PNG too small (blank?): ${size}B`);
+  await page.getByRole("button", { name: "Defaults" }).click();
+  assert(!page.url().includes("?"), `URL not cleared: ${page.url()}`);
+  assert((await slider(page, "Speed").inputValue()) === "10", "defaults not applied");
+  assert((await page.getByLabel("Starting pattern").inputValue()) === "Glider Gun (Gosper)", "default pattern not applied");
+  await waitPopulation(page, 36); // ...and the grid really was reloaded: the Gosper gun has 36 cells
+});
+
+await test("cellular-automata: garbage in the URL is ignored/clamped, never crashes", async (page) => {
+  await open(page, "/cs/cellular-automata?speed=9999&gridSize=7&theme=x&pattern=banana&birth=zz&survive=9&showGraph=maybe");
+  assert((await slider(page, "Speed").inputValue()) === "60", "speed should clamp to 60");
+  assert((await page.getByLabel("Grid size").inputValue()) === "256", "grid size should default");
+  assert((await page.getByLabel("Color theme").inputValue()) === "0", "theme should default");
+  assert((await page.getByLabel("Starting pattern").inputValue()) === "Glider Gun (Gosper)", "pattern should default");
+  assert((await page.locator("input[inputmode=numeric]").first().inputValue()) === "3", "birth rule should default");
+  assert((await page.locator("select[aria-label='Rule preset']").inputValue()) === "Conway's Life", "rule should be Conway's");
+  assert(await page.getByLabel("Population graph").isChecked(), "graph switch should default on");
+  await waitPopulation(page, 36);
+});
+
+await test("cellular-automata: the GPU recognises still lifes, oscillators, moving patterns and extinction", async (page) => {
+  await open(page, "/cs/cellular-automata?pattern=Block&speed=60");
+  await waitPopulation(page, 4);
+  assert(/^Evolving/.test(await caStatus(page)), `a single generation proves nothing yet: "${await caStatus(page)}"`);
+  await page.getByRole("button", { name: "Play" }).click();
+  await waitStatus(page, /^Still life$/);
+  assert((await caPopulation(page)) === 4, "a block keeps its 4 cells");
+  const expectations = [
+    ["Blinker", /^Oscillator, period 2$/, [3]],
+    ["Pulsar", /^Oscillator, period 3$/, [48, 56, 72]], // its three phases have different sizes
+    ["Glider", /^Moving pattern/, [5]],
+  ];
+  for (const [name, status, cells] of expectations) {
+    await page.getByLabel("Starting pattern").selectOption(name); // restarts the history; each verdict differs from the last one
+    await waitStatus(page, status);
+    const n = await caPopulation(page);
+    assert(cells.includes(n), `${name}: ${n} cells, expected one of ${cells.join("/")}`);
+  }
+  await page.getByRole("button", { name: "Pause" }).click();
+  await page.getByRole("button", { name: "Clear" }).click();
+  await waitStatus(page, /^Extinct$/);
+  assert((await caPopulation(page)) === 0, "empty grid has no cells");
+  await page.getByRole("button", { name: "Random" }).click();
+  await waitStatus(page, /^Evolving/);
+  assert((await caPopulation(page)) > 5000, "a random soup fills about a fifth of 65,536 cells"); // 20 %
+  await shot(page, "ca-status");
+});
+
+await test("cellular-automata: population graph follows the run and can be switched off", async (page) => {
+  await open(page, "/cs/cellular-automata?pattern=Blinker&speed=60");
+  assert((await page.locator("figure svg[role=img]").count()) === 0, "no graph before there is any history");
+  await page.getByRole("button", { name: "Play" }).click();
+  await page.waitForSelector("figure svg[role=img]", { timeout: 20_000 });
+  await waitStatus(page, /^Oscillator, period 2$/);
+  await page.waitForFunction(() => /3 live cells now\. Oscillator, period 2/.test(document.querySelector("figure svg[role=img]")?.getAttribute("aria-label") ?? ""), null, { timeout: 15_000 });
+  assert(/Live cells per generation/.test((await page.locator("figure svg[role=img]").getAttribute("aria-label")) ?? ""), "graph needs an accessible name");
+  await shot(page, "ca-graph");
+  await page.getByLabel("Population graph").uncheck();
+  assert((await page.locator("figure svg[role=img]").count()) === 0, "graph still shown after switching it off");
+  assert(page.url().includes("showGraph=0"), `URL not updated: ${page.url()}`);
+});
+
+await test("cellular-automata: editing the grid restarts the measurement from what is on screen", async (page) => {
+  await open(page, "/cs/cellular-automata?pattern=Blinker&speed=60");
+  await page.getByRole("button", { name: "Play" }).click();
+  await waitStatus(page, /^Oscillator, period 2$/);
+  await page.getByRole("button", { name: "Pause" }).click();
+  await page.waitForTimeout(400);
+  await page.getByRole("button", { name: "Draw", exact: true }).click();
+  const { cx, cy, cell } = await zoomToCells(page);
+  await clickAt(page, cx + 6 * cell, cy + 6 * cell); // one extra, isolated cell far from the blinker
+  await waitPopulation(page, 4);
+  assert(/^Evolving/.test(await caStatus(page)), `old verdict survived an edit: "${await caStatus(page)}"`);
+  await page.getByRole("button", { name: "Erase", exact: true }).click();
+  await clickAt(page, cx + 6 * cell, cy + 6 * cell); // and take it away again
+  await waitPopulation(page, 3);
+});
+
+await test("cellular-automata: challenge flow (still life) — draw a 2×2 block, press Play, persist", async (page) => {
+  await open(page, "/cs/cellular-automata");
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /Build something that never changes/ }).click();
+  assert(await page.getByRole("button", { name: /Lock in/ }).isDisabled(), "lock-in enabled without a prediction");
+  await page.getByLabel("A 2×2 square").check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  assert(page.url().includes("pattern=clear"), `setup not applied: ${page.url()}`);
+  assert((await page.getByRole("button", { name: "Draw", exact: true }).getAttribute("aria-pressed")) === "true", "setup should hand over the Draw tool");
+  assert((await page.getByRole("button", { name: /^(Play|Pause)$/ }).textContent()) === "Play", "experiments start paused");
+  await waitStatus(page, /^Extinct$/);
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "goal met by an empty grid");
+
+  const { cx, cy, cell } = await zoomToCells(page);
+  for (const [dx, dy] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) await clickAt(page, cx + dx * cell, cy + dy * cell);
+  await waitPopulation(page, 4);
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "goal met before pressing Play");
+
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 30_000 });
+  assert((await caStatus(page)) === "Still life", `status: ${await caStatus(page)}`);
+  assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
+  await shot(page, "ca-challenge");
+  await page.reload();
+  await page.locator("canvas").waitFor();
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  assert((await page.locator("text=/1 of 3 done/").count()) === 1, "completion not persisted");
+});
+
+await test("cellular-automata: challenge flow (oscillator) cannot be solved by changing the rules", async (page) => {
+  await open(page, "/cs/cellular-automata");
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /Make it blink/ }).click();
+  await page.getByLabel(/flip between a horizontal and a vertical row/).check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  await waitStatus(page, /^Extinct$/);
+  const { cx, cy, cell } = await zoomToCells(page);
+  for (const dx of [-0.5, 0.5, 1.5]) await clickAt(page, cx + dx * cell, cy - 0.5 * cell); // three in a row
+  await waitPopulation(page, 3);
+  // A blinker blinks under HighLife too, but that proves nothing about Conway's rules.
+  await page.locator("select[aria-label='Rule preset']").selectOption({ label: "HighLife (B36/S23)" });
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await waitStatus(page, /^Oscillator, period 2$/);
+  await page.waitForTimeout(500);
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "goal accepted under non-Conway rules");
+  await page.locator("select[aria-label='Rule preset']").selectOption({ label: "Conway's Life (B3/S23)" });
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 30_000 });
+  assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
+});
+
+await test("cellular-automata: challenge flow (glider gun) — the population climbs past 100", async (page) => {
+  await open(page, "/cs/cellular-automata");
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /Grow without limit/ }).click();
+  await page.getByLabel("keep growing").check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  await waitPopulation(page, 36);
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "goal met at 36 cells");
+  // A dense random soup is far above 100 cells from the start; it must not count.
+  await page.getByRole("button", { name: "Random" }).click();
+  await page.waitForFunction(() => Number((document.querySelector("[data-testid=ca-population]")?.textContent ?? "").replace(/,/g, "")) > 5000);
+  await page.waitForTimeout(500);
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "a random soup solved the gun challenge");
+  await page.getByLabel("Starting pattern").selectOption("Glider Gun (Gosper)");
+  await waitPopulation(page, 36);
+  await slider(page, "Speed").fill("60");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 150_000 });
+  assert((await caPopulation(page)) > 100, `population ${await caPopulation(page)}`);
+  assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
 });
 
 // ───────────────────────────── resilience ─────────────────────────────

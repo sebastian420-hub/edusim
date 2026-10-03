@@ -7,7 +7,7 @@ Built with Next.js 16 (App Router, Turbopack), React 19, Tailwind 4 and [vgpu](h
 |---|---|---|
 | Wave Interference & Diffraction | Physics | Fragment shader; Huygens–Fresnel slits as phasor sums |
 | Hodgkin–Huxley Neuron | Biology | Compute shader integrates the ODEs; fragment shader plots the traces |
-| Cellular Automata | Computer Science | Ping-pong compute shader over grids up to 2048², pan/zoom renderer |
+| Cellular Automata | Computer Science | Ping-pong compute shader over grids up to 2048²; a reduction shader counts and fingerprints every generation; pan/zoom renderer |
 
 The catalog in `src/lib/subjects.ts` lists many more planned simulations (marked "Coming Soon").
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the improvement plan.
@@ -35,7 +35,7 @@ explanatory message instead of a blank canvas.
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
 | `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
-| `pnpm e2e` | Full browser suite (37 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export |
+| `pnpm e2e` | Full browser suite (45 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
 | `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
 | `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
@@ -81,9 +81,16 @@ src/
 - **`SimLayout`:** copy link, save image, reset to defaults, keyboard shortcuts (Space, `.`, `R`, `?`) and an
   optional Challenges tab.
 - **Challenges:** data in `lib/challenges.ts` format (predict → set up → goal check → explanation), rendered by
-  `ChallengesPanel`. See `simulations/physics/wave-interference/challenges.ts` and `simulations/biology/hodgkin-huxley/challenges.ts`.
-- **Measurement:** sims get a TypeScript twin of the shader (`wave.ts`, `hh.ts`) used for graphs and readouts,
-  and a GPU test proving the two agree. `MiniChart` is a small SVG chart for readouts like the firing-rate curve.
+  `ChallengesPanel`. See `challenges.ts` next to each simulation. Each has a test that its setup does not already
+  solve it, that the intended answer does, and that obvious shortcuts do not.
+- **Measurement:** sims get a TypeScript twin of the shader (`wave.ts`, `hh.ts`, `life.ts`) used for graphs,
+  readouts and tests, and a GPU test proving the two agree. `MiniChart` is a small SVG chart for readouts like the
+  firing-rate curve and the population graph.
+- **Cellular automata measurement:** `count.wgsl` reduces the grid to a live-cell count and an order-independent
+  fingerprint every generation (into a 1024-slot ring buffer); `sim.ts` reads it back at most every 100 ms and
+  `tracker.ts` classifies the history (extinct / still life / oscillator with period / moving pattern). It only runs
+  when a host passes `onStats`, so the home-page preview pays nothing. A shared link reproduces the rules, grid,
+  speed, colours and the *starting pattern* (a library pattern, random soup or empty grid) — not hand-drawn cells.
 
 ## The home page
 
