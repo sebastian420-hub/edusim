@@ -125,9 +125,8 @@ asserted against the CPU twin in `challenges.test.ts`.
 
 Recommended order, each chosen to reuse what exists and to showcase the GPU:
 
-1. **Double pendulum chaos** (easy): one pendulum plus a GPU ensemble of thousands of slightly
-   different starts, showing divergence; a "flip-time fractal" map. Next up — plan in
-   [`DOUBLE-PENDULUM-PLAN.md`](DOUBLE-PENDULUM-PLAN.md).
+1. ✅ **Double pendulum chaos** (easy): Pendulum, Butterfly (up to 10 000 pendulums, measured λ) and Fractal
+   (up to 1024² pendulums) views, 4 challenges — see [`DOUBLE-PENDULUM-PLAN.md`](DOUBLE-PENDULUM-PLAN.md).
 2. **Resting membrane potential** (easy): reuses the biology UI and HH concepts (Nernst, Goldman).
 3. ✅ **N-body orbital mechanics** (medium): orbit lab + colliding galaxies, measured Kepler's laws, 4 challenges — see [`NBODY-PLAN.md`](NBODY-PLAN.md).
 4. **Axon propagation** (medium): many HH compartments in parallel — the HH shader generalised from

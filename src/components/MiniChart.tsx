@@ -15,6 +15,9 @@ interface MiniChartProps {
   /** A highlighted point on the curve. */
   point?: { x: number; y: number };
   yMax?: number;
+  /** Horizontal axis range (default: the range of `x`). */
+  xMin?: number;
+  xMax?: number;
   /** Bottom of the vertical axis (default 0). */
   yMin?: number;
   /** Measured points drawn as dots (a scatter on top of, or instead of, the line). */
@@ -31,9 +34,9 @@ const H = 150;
 const PAD = { left: 38, right: 10, top: 10, bottom: 30 };
 
 /** Small dependency-free SVG line chart with axes, vertical markers and one highlighted point. */
-export function MiniChart({ title, xLabel, yLabel, x, y, markers = [], point, yMax, yMin = 0, points = [], format = (v) => String(Math.round(v)), summary, className = "" }: MiniChartProps) {
-  const xMin = Math.min(...x);
-  const xMax = Math.max(...x);
+export function MiniChart({ title, xLabel, yLabel, x, y, markers = [], point, yMax, yMin = 0, xMin: xLow, xMax: xHigh, points = [], format = (v) => String(Math.round(v)), summary, className = "" }: MiniChartProps) {
+  const xMin = xLow ?? Math.min(...x);
+  const xMax = xHigh ?? Math.max(...x);
   const yTop = yMax ?? Math.max(1, ...y);
   const sx = (v: number) => PAD.left + ((v - xMin) / (xMax - xMin || 1)) * (W - PAD.left - PAD.right);
   const sy = (v: number) => H - PAD.bottom - ((v - yMin) / (yTop - yMin || 1)) * (H - PAD.top - PAD.bottom);

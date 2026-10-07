@@ -16,6 +16,10 @@ import { createRenderer as createNBodyRenderer } from "./physics/n-body/renderer
 import { computeAccelerations, G_ORBIT, rng as nbodyRng, stateFromBodies, step } from "./physics/n-body/nbody";
 import { orbitPreset as nbodyPreset } from "./physics/n-body/presets";
 import { TRAIL_LEN as NBODY_TRAIL_LEN } from "./physics/n-body/sim-constants";
+import { createEngine as createPendulumEngine } from "./physics/double-pendulum/engine";
+import { createRenderer as createPendulumRenderer } from "./physics/double-pendulum/renderer";
+import { DEFAULT_PENDULUM, energy as pendulumEnergy, flipTime, FULL_WINDOW, pixelAngles, rad, step as pendulumStep } from "./physics/double-pendulum/pendulum";
+import type { State as PendulumState } from "./physics/double-pendulum/pendulum";
 import { DEFAULT_PARAMS, DT_MS, HISTORY_SAMPLES, REST_STATE, SAMPLE_EVERY, simulate } from "./biology/hodgkin-huxley/hh";
 
 let gpu: NodeGpu | null = null;
@@ -375,5 +379,131 @@ describe("N-body engine (gravity + integrate shaders) vs CPU twin", () => {
     r2.dispose();
     engine.dispose();
     e2.dispose();
+  });
+});
+
+describe("Double pendulum engine vs CPU twin", () => {
+  const P = DEFAULT_PENDULUM;
+  const twinRun = (start: PendulumState, dt: number, steps: number, integrator: "rk4" | "euler" = "rk4") => {
+    let s = start;
+    for (let k = 0; k < steps; k++) s = pendulumStep(s, dt, P, integrator);
+    return s;
+  };
+
+  needsGpu("RK4 and Euler kernels follow the twin for regular starts, for counts around the 64-wide workgroups", async (gpu) => {
+    const engine = createPendulumEngine(gpu, 200);
+    engine.setParams(P);
+    for (const n of [1, 63, 64, 65, 200]) {
+      const starts: PendulumState[] = Array.from({ length: n }, (_, i) => [rad(5 + (i % 40)), rad(-10 + (i % 25)), 0.1 * (i % 3), 0]);
+      engine.upload(new Float32Array(starts.flat()), n);
+      for (const integrator of ["rk4", "euler"] as const) {
+        engine.upload(new Float32Array(starts.flat()), n);
+        engine.step(2e-3, 500, integrator);
+        const snap = await engine.read();
+        expect(snap.time).toBeCloseTo(1, 9);
+        for (let i = 0; i < n; i++) {
+          const twin = twinRun(starts[i], 2e-3, 500, integrator);
+          for (let c = 0; c < 4; c++) expect(Math.abs(snap.state[i * 4 + c] - twin[c]), `n=${n} ${integrator} #${i}.${c}`).toBeLessThan(2e-3);
+        }
+      }
+    }
+    engine.dispose();
+  });
+
+  needsGpu("RK4 on the GPU keeps the energy (f32: drift below 1e-4 over 10 s)", async (gpu) => {
+    const engine = createPendulumEngine(gpu, 1);
+    const start: PendulumState = [rad(30), rad(20), 0, 0];
+    engine.upload(new Float32Array(start), 1);
+    for (let k = 0; k < 10; k++) engine.step(1e-3, 1000);
+    const s = (await engine.read()).state;
+    const e0 = pendulumEnergy(start, P).total;
+    expect(Math.abs(pendulumEnergy([s[0], s[1], s[2], s[3]], P).total / e0 - 1)).toBeLessThan(1e-4);
+    engine.dispose();
+  });
+
+  needsGpu("fractal seeding matches pixelAngles; flip times match the twin at regular pixels and are symmetric", async (gpu) => {
+    const size = 24;
+    const engine = createPendulumEngine(gpu, size * size);
+    engine.seedFractal(size, FULL_WINDOW);
+    const seeded = await engine.read();
+    expect(seeded.n).toBe(size * size);
+    for (const [i, j] of [[0, 0], [5, 17], [23, 23], [12, 3]]) {
+      const [a, b] = pixelAngles(i, j, size, FULL_WINDOW);
+      expect(seeded.state[(j * size + i) * 4]).toBeCloseTo(a, 5);
+      expect(seeded.state[(j * size + i) * 4 + 1]).toBeCloseTo(b, 5);
+      expect(seeded.state[(j * size + i) * 4 + 2]).toBe(0);
+    }
+    expect([...(await engine.readFlips())].every((t) => t === -1)).toBe(true);
+
+    const dt = 2e-3;
+    for (let k = 0; k < 4; k++) engine.step(dt, 250); // 2 s
+    const flips = await engine.readFlips();
+    let compared = 0;
+    for (let j = 0; j < size; j++) {
+      for (let i = 0; i < size; i++) {
+        const [a, b] = pixelAngles(i, j, size, FULL_WINDOW);
+        const twin = flipTime([a, b, 0, 0], P, dt, 2);
+        const gpuT = flips[j * size + i];
+        // Pixels that flip early (within 0.6 s, before chaos can amplify f32 rounding) agree to a step; pixels the
+        // twin never flips in 2 s mostly agree too, but chaotic ones may not, so only the early ones are strict.
+        if (twin !== undefined && twin < 0.6) {
+          expect(Math.abs(gpuT - twin), `pixel ${i},${j}`).toBeLessThanOrEqual(dt * 1.01);
+          compared++;
+        }
+        // (θ₁, θ₂) → (−θ₁, −θ₂) is pixel (i, j) → (n−1−i, n−1−j).
+        const mirror = flips[(size - 1 - j) * size + (size - 1 - i)];
+        if (twin !== undefined && twin < 0.6) expect(Math.abs(mirror - gpuT), `mirror ${i},${j}`).toBeLessThanOrEqual(dt * 1.01);
+        // Inside the energy boundary nothing flips.
+        if (2 * Math.cos(a) + Math.cos(b) > 1) expect(gpuT, `forbidden ${i},${j}`).toBe(-1);
+      }
+    }
+    expect(compared).toBeGreaterThan(20);
+    // The cursor probe reads single pixels without reading the map back.
+    for (const k of [0, 77, size * size - 1]) expect(await engine.readFlipAt(k)).toBe(flips[k]);
+    engine.dispose();
+  });
+
+  needsGpu("the trail records the lower bob of pendulum 0", async (gpu) => {
+    const engine = createPendulumEngine(gpu, 2);
+    engine.upload(new Float32Array([Math.PI / 2, 0, 0, 0, 0, 0, 0, 0]), 2);
+    engine.recordTrail();
+    const trail = new Float32Array(await engine.buffers.trail.read());
+    expect(trail[0]).toBeCloseTo(1, 5);
+    expect(trail[1]).toBeCloseTo(-1, 5);
+    expect(trail[3]).toBe(1);
+    expect(engine.trailHead).toBe(1);
+    engine.dispose();
+  });
+
+  needsGpu("draws rods and bobs where the angles put them; the fractal colours flipped pixels", async (gpu) => {
+    const t = target(gpu, { size: [64, 64] });
+    const engine = createPendulumEngine(gpu, 4);
+    engine.upload(new Float32Array([Math.PI / 2, 0, 0, 0]), 1); // upper arm horizontal right, lower hanging down
+    const renderer = createPendulumRenderer(gpu, engine);
+    const view = { center: [0, 0] as [number, number], pxPerUnit: 12 };
+    frame(gpu, (f) => f.pass({ target: t, clear: [0, 0, 0, 1] }, renderer.prepare(t, view, { kind: "pendulums", crowd: false }, false)));
+    const px = await t.color.read({ mipLevel: 0, region: "all" });
+    const lum = (x: number, y: number) => px[(y * 64 + x) * 4] + px[(y * 64 + x) * 4 + 1] + px[(y * 64 + x) * 4 + 2];
+    expect(lum(44, 32)).toBeGreaterThan(300); // upper bob at (1, 0) → 12 px right of centre
+    expect(lum(44, 44)).toBeGreaterThan(300); // lower bob at (1, −1) → 12 px below that
+    expect(lum(38, 32)).toBeGreaterThan(100); // the upper rod between them
+    expect(lum(20, 44)).toBe(0); // empty space
+    expect(lum(32, 50)).toBe(0);
+
+    // Fractal: a 2×2 map where only the top-left pixel has flipped.
+    const f2 = createPendulumEngine(gpu, 4);
+    f2.seedFractal(2, FULL_WINDOW);
+    f2.buffers.flip.write(new Float32Array([0.5, -1, -1, -1]));
+    const r2 = createPendulumRenderer(gpu, f2);
+    frame(gpu, (f) => f.pass({ target: t, clear: [0, 0, 0, 1] }, r2.prepare(t, view, { kind: "fractal", size: 2, window: FULL_WINDOW, tMax: 30, boundary: false }, false)));
+    const p2 = await t.color.read({ mipLevel: 0, region: "all" });
+    const l2 = (x: number, y: number) => p2[(y * 64 + x) * 4] + p2[(y * 64 + x) * 4 + 1] + p2[(y * 64 + x) * 4 + 2];
+    expect(l2(10, 10)).toBeGreaterThan(200); // flipped early: bright
+    expect(l2(50, 10)).toBeLessThan(60); // not flipped: dark
+    expect(l2(50, 50)).toBeLessThan(60);
+    renderer.dispose();
+    r2.dispose();
+    engine.dispose();
+    f2.dispose();
   });
 });

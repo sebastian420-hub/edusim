@@ -3,6 +3,7 @@
 //
 //   pnpm posters                 # builds, serves, captures, writes public/plates/*.webp and the OG image
 //   pnpm posters --skip-build    # reuse an existing .next build
+//   pnpm posters --only=n-body   # recapture only these posters (comma-separated ids); the OG image uses all
 //
 // Each poster is captured from fixed, shareable-link settings (so it is reproducible), reading only
 // the <canvas> pixels (no HTML overlays), cover-cropped to the plate's proportions and encoded as WebP.
@@ -41,6 +42,17 @@ const POSTERS = [
       const box = await page.locator("canvas").first().boundingBox();
       await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
       for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -100); // ~1.6x: the galaxies fill the plate
+      await wait(1500);
+    },
+  },
+  {
+    id: "double-pendulum",
+    route: "/physics/double-pendulum?view=fractal&boundary=0",
+    canvasWidth: 720, // the map is square: a canvas taller and wider than the poster lets it fill the crop
+    focus: { x: 0.5, y: 0.5 },
+    async prepare(page) {
+      // Let every pendulum of the 512² map run its full 30 s, so the fractal is complete.
+      await page.waitForFunction(() => (document.querySelector("[data-testid=dp-map-time]")?.textContent ?? "").startsWith("30.0"), null, { timeout: 1_200_000 });
       await wait(1500);
     },
   },
@@ -119,7 +131,8 @@ await withServer(
     });
     fs.mkdirSync(OUT_DIR, { recursive: true });
 
-    for (const poster of POSTERS) {
+    const only = process.argv.find((a) => a.startsWith("--only="))?.slice("--only=".length).split(",");
+    for (const poster of POSTERS.filter((p) => !only || only.includes(p.id))) {
       // Viewport chosen so the canvas is already close to the poster's proportions (sidebar is 384 px wide).
       const context = await browser.newContext({ viewport: { width: (poster.canvasWidth ?? WIDTH) + 384, height: HEIGHT + 64 }, deviceScaleFactor: 1 });
       await context.addInitScript(() => localStorage.setItem("edusim:quality", "full"));
@@ -154,10 +167,10 @@ await withServer(
           <div style="width:360px;flex:none">
             <div style="font:500 14px var(--font-geist-mono),monospace;letter-spacing:.14em;color:#5eead4;text-transform:uppercase;margin-bottom:22px">Interactive · GPU-computed</div>
             <div style="font-size:54px;line-height:1.04;font-weight:500;letter-spacing:-.035em">Science you can <span style="color:#939bab">reach into.</span></div>
-            <div style="margin-top:26px;font-size:18px;line-height:1.45;color:#939bab">Live models of waves, orbits, neurons and cellular life, computed on your graphics card.</div>
+            <div style="margin-top:26px;font-size:18px;line-height:1.45;color:#939bab">Live models of waves, orbits, chaos, neurons and cellular life, computed on your graphics card.</div>
             <div style="margin-top:34px;font:500 22px var(--font-geist-sans),sans-serif;letter-spacing:-.01em">EduSim</div>
           </div>
-          <div style="display:flex;gap:12px">${images.map((src) => `<img src="${src}" style="width:${images.length > 3 ? 168 : 214}px;height:${images.length > 3 ? 185 : 235}px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
+          <div style="display:flex;gap:12px">${images.map((src) => `<img src="${src}" style="width:${images.length > 4 ? 128 : images.length > 3 ? 168 : 214}px;height:${images.length > 4 ? 141 : images.length > 3 ? 185 : 235}px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
         </div>`;
       document.body.style.margin = "0";
     }, dataUrls);

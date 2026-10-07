@@ -1,5 +1,13 @@
 # Double Pendulum Chaos — research and implementation plan
 
+> **Status: shipped** with all three views. Decisions taken: one scrolling row of plates on the home page (four at a
+> time on desktop), 512² fractal by default with a 1024² option, all three views in v1. Two changes from the plan,
+> both found while building it: (1) the Pendulum view and the measured Butterfly pair are integrated on the CPU in
+> 64-bit, because a 32-bit float near 2 rad cannot store a 10⁻⁹ rad nudge at all (the GPU crowd starts one 32-bit step
+> apart instead, and the page measures when it parts from the 64-bit pair); (2) the λ estimate is a least-squares slope
+> of ln(gap) over the growing range instead of Benettin renormalisation, which keeps the plotted gap honest. The energy
+> boundary on the map is drawn for any masses and lengths (a·cos θ₁ + b·cos θ₂ = c, `flipBoundary`).
+
 The fifth simulation (catalog id `double-pendulum`, route `/physics/double-pendulum`, already listed as planned).
 Same bar as the other four: a TypeScript twin of every shader, GPU-vs-twin tests, shareable settings, measurements a
 test proves correct, guided challenges, e2e scenarios, a poster and a live home-page preview.

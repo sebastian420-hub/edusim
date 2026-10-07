@@ -8,6 +8,9 @@ import { createCellularAutomata } from "./cs/cellular-automata/sim";
 import type { CellularAutomataHandle } from "./cs/cellular-automata/sim";
 import { createHodgkinHuxley } from "./biology/hodgkin-huxley/sim";
 import type { HHHandle } from "./biology/hodgkin-huxley/sim";
+import { createDoublePendulum } from "./physics/double-pendulum/sim";
+import type { PendulumHandle } from "./physics/double-pendulum/sim";
+import { DEFAULT_PENDULUM, FULL_WINDOW } from "./physics/double-pendulum/pendulum";
 import { createNBody } from "./physics/n-body/sim";
 import type { NBodyHandle } from "./physics/n-body/sim";
 import { createWaveSim } from "./physics/wave-interference/sim";
@@ -50,6 +53,15 @@ export const PREVIEWS: Record<string, Preview> = {
       // Two galaxies colliding: the GPU showcase. Small enough for any GPU, at the most dramatic speed.
       handle.setGalaxy("collision", 2048);
       handle.setSpeed(3);
+      handle.play();
+    },
+  }),
+
+  "double-pendulum": define<PendulumHandle>({
+    factory: (ctx) => createDoublePendulum(ctx),
+    setup(handle) {
+      // The flip-time fractal developing from dark: a quarter of a million pendulums, one per pixel.
+      handle.configure({ view: "fractal", start: [0, 0], params: DEFAULT_PENDULUM, integrator: "rk4", count: 2, nudge: 1e-9, fractalSize: 512, window: FULL_WINDOW, boundary: false });
       handle.play();
     },
   }),

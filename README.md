@@ -7,6 +7,7 @@ Built with Next.js 16 (App Router, Turbopack), React 19, Tailwind 4 and [vgpu](h
 |---|---|---|
 | Wave Interference & Diffraction | Physics | Fragment shader; Huygens–Fresnel slits as phasor sums |
 | N-Body Orbital Mechanics | Physics | Tiled all-pairs gravity compute shader (up to 16 384 bodies), leapfrog integrator, instanced rendering |
+| Double Pendulum Chaos | Physics | One RK4 compute kernel for every view: a 32-bit GPU crowd of up to 10 000 pendulums against a 64-bit CPU pair, and a flip-time fractal of up to 1024² pendulums (one per pixel) |
 | Hodgkin–Huxley Neuron | Biology | Compute shader integrates the ODEs; fragment shader plots the traces |
 | Cellular Automata | Computer Science | Ping-pong compute shader over grids up to 2048²; a reduction shader counts and fingerprints every generation; pan/zoom renderer |
 
@@ -36,7 +37,7 @@ explanatory message instead of a blank canvas.
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
 | `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
-| `pnpm e2e` | Full browser suite (62 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
+| `pnpm e2e` | Full browser suite (71 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
 | `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
 | `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
@@ -98,6 +99,13 @@ src/
   on compatibility-mode devices) and draws instanced discs and fading trails. Energies, orbital elements and measured
   periods come from small read-backs, sampled every ≤ 16 steps so fast planets are never aliased. The orbit lab's
   units are AU, years and solar masses (G = 4π²), so Earth's period is exactly 1 year.
+- **Double pendulum:** `pendulum.ts` is the 64-bit twin (equations of motion, RK4/Euler, energy, flips, the energy
+  boundary, normal modes, the spread and its growth rate λ); `measure.ts` turns states into readouts, shared by the sim
+  and the challenge tests. The Pendulum view and the measured Butterfly pair are integrated on the CPU in 64-bit (two
+  pendulums cost nothing, and 32-bit floats cannot even store a 10⁻⁹ rad nudge near 2 rad), and only drawn by the GPU;
+  the Butterfly crowd (`crowdAngles` keeps its 32-bit starts distinct) and the Fractal run `pendulum.wgsl` on the GPU.
+  The fractal is seeded on the GPU (`seed.wgsl`), coloured by `fractal.wgsl` straight from the flip-time buffer, and
+  the cursor readout copies out a single pixel instead of reading the map back.
 - **Cellular automata measurement:** `count.wgsl` reduces the grid to a live-cell count and an order-independent
   fingerprint every generation (into a 1024-slot ring buffer); `sim.ts` reads it back at most every 100 ms and
   `tracker.ts` classifies the history (extinct / still life / oscillator with period / moving pattern). It only runs
@@ -107,7 +115,7 @@ src/
 ## The home page
 
 A compact editorial layout (about one screen on a desktop, 1.35 on a phone): numbered *plates* for the working
-simulations and a typographic index of the planned ones. Design tokens (colours, type scale, motion) live in
+simulations (one row that scrolls sideways with snap: four at a time on a desktop, a swipe on a phone) and a typographic index of the planned ones. Design tokens (colours, type scale, motion) live in
 `src/app/globals.css`; components in `src/components/home/`. The plan and measurements are in
 [`docs/HOMEPAGE-PLAN.md`](docs/HOMEPAGE-PLAN.md).
 
