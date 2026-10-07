@@ -17,6 +17,7 @@ function loadSim(importer: () => Promise<{ default: ComponentType }>) {
 
 export const SIM_LOADERS: Record<string, ComponentType> = {
   "wave-interference": loadSim(() => import("./physics/wave-interference/controls")),
+  "n-body": loadSim(() => import("./physics/n-body/controls")),
   "cellular-automata": loadSim(() => import("./cs/cellular-automata/controls")),
   "hodgkin-huxley": loadSim(() => import("./biology/hodgkin-huxley/controls")),
 };

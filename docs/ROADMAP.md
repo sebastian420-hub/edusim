@@ -3,7 +3,8 @@
 Status: the foundation is stable (shared GPU runtime, three working simulations, registry routing,
 unit + headless-GPU tests, shader validation, browser smoke test) and **all three simulations now meet the same
 bar** — shareable settings, a measurement the tests prove correct, and three guided challenges (phases C, D and E
-below). What remains is touch/phone polish (phase B) and new simulations (phase F).
+below). The fourth simulation, N-body orbital mechanics, shipped to the same bar. What remains is touch/phone
+polish (phase B) and further simulations (phase F).
 EduSim runs **locally** for now, so nothing below depends on hosting.
 
 ## Guiding principles
@@ -121,7 +122,7 @@ Recommended order, each chosen to reuse what exists and to showcase the GPU:
 1. **Double pendulum chaos** (easy): one pendulum plus a GPU ensemble of thousands of slightly
    different starts, showing divergence; a "flip-time fractal" map as a stretch goal.
 2. **Resting membrane potential** (easy): reuses the biology UI and HH concepts (Nernst, Goldman).
-3. **N-body orbital mechanics** (medium): compute shader, a natural next GPU showcase. Next up — plan in [`NBODY-PLAN.md`](NBODY-PLAN.md).
+3. ✅ **N-body orbital mechanics** (medium): orbit lab + colliding galaxies, measured Kepler's laws, 4 challenges — see [`NBODY-PLAN.md`](NBODY-PLAN.md).
 4. **Axon propagation** (medium): many HH compartments in parallel — the HH shader generalised from
    1 thread to N, which is where the GPU truly pays off for biology.
 

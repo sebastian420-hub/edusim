@@ -30,6 +30,21 @@ const POSTERS = [
     },
   },
   {
+    id: "n-body",
+    route: "/physics/n-body?mode=galaxy&count=2048&galaxySpeed=4",
+    focus: { x: 0.5, y: 0.5 },
+    async prepare(page) {
+      await page.getByRole("button", { name: "Play", exact: true }).click();
+      // Let the galaxies pass each other and throw out tidal tails.
+      await page.waitForFunction(() => Number(document.querySelector("[data-testid=nb-time]")?.textContent ?? 0) >= 16, null, { timeout: 240_000 });
+      await page.getByRole("button", { name: "Pause", exact: true }).click();
+      const box = await page.locator("canvas").first().boundingBox();
+      await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
+      for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -100); // ~1.6x: the galaxies fill the plate
+      await wait(1500);
+    },
+  },
+  {
     id: "hodgkin-huxley",
     route: "/biology/hodgkin-huxley?I_inj=12&temperature=1&timeScale=200&showCurve=0",
     focus: { x: 0.5, y: 0.5 },
@@ -127,7 +142,7 @@ await withServer(
       await context.close();
     }
 
-    // Social-preview image: the three posters and the headline, set in the site's own fonts and tokens.
+    // Social-preview image: the posters and the headline, set in the site's own fonts and tokens.
     const context = await browser.newContext({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 1 });
     const page = await context.newPage();
     await page.goto(base + "/");
@@ -138,10 +153,10 @@ await withServer(
           <div style="width:360px;flex:none">
             <div style="font:500 14px var(--font-geist-mono),monospace;letter-spacing:.14em;color:#5eead4;text-transform:uppercase;margin-bottom:22px">Interactive · GPU-computed</div>
             <div style="font-size:54px;line-height:1.04;font-weight:500;letter-spacing:-.035em">Science you can <span style="color:#939bab">reach into.</span></div>
-            <div style="margin-top:26px;font-size:18px;line-height:1.45;color:#939bab">Live models of waves, neurons and cellular life, computed on your graphics card.</div>
+            <div style="margin-top:26px;font-size:18px;line-height:1.45;color:#939bab">Live models of waves, orbits, neurons and cellular life, computed on your graphics card.</div>
             <div style="margin-top:34px;font:500 22px var(--font-geist-sans),sans-serif;letter-spacing:-.01em">EduSim</div>
           </div>
-          <div style="display:flex;gap:14px">${images.map((src) => `<img src="${src}" style="width:214px;height:235px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
+          <div style="display:flex;gap:12px">${images.map((src) => `<img src="${src}" style="width:${images.length > 3 ? 168 : 214}px;height:${images.length > 3 ? 185 : 235}px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
         </div>`;
       document.body.style.margin = "0";
     }, dataUrls);

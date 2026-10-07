@@ -88,13 +88,13 @@ async function assertNoGpuProblem(page, where = "") {
 /** Navigates and waits for the GPU overlay to go away (the sim is ready and drawing). */
 async function open(page, route) {
   await page.goto(url(route));
-  await page.locator("canvas").waitFor({ timeout: 20_000 });
+  await page.locator("canvas").first().waitFor({ timeout: 20_000 });
   await page.waitForSelector("[data-testid=gpu-status][data-state=loading]", { state: "detached", timeout: 30_000 });
   await page.waitForTimeout(600);
   await assertNoGpuProblem(page);
 }
 
-const canvasPixels = (page) => page.locator("canvas").screenshot();
+const canvasPixels = (page) => page.locator("canvas").first().screenshot();
 // By role: a label match is a substring match and would also hit e.g. the chart's accessible name.
 const slider = (page, name) => page.getByRole("slider", { name, exact: true });
 /**
@@ -154,20 +154,20 @@ async function waitForChange(page, reference, message, timeout = 10_000) {
 const text = async (page, selector) => (await page.locator(selector).first().textContent()) ?? "";
 
 // ───────────────────────────── home ─────────────────────────────
-await test("home: compact editorial layout — plates link to the 3 simulations, planned ones are plain text", async (page) => {
+await test("home: compact editorial layout — plates link to the 4 simulations, planned ones are plain text", async (page) => {
   await page.goto(url("/"));
   assert((await page.title()).includes("EduSim"), `title: ${await page.title()}`);
   assert((await page.locator("h1").count()) === 1, "exactly one h1");
   assert((await text(page, "h1")).includes("reach into"), "headline");
   const links = await page.locator("main a[href^='/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
-  assert(links.length === 3, `expected 3 plate links, got ${links.join(",")}`);
+  assert(links.length === 4, `expected 4 plate links, got ${links.join(",")}`);
   for (const l of await page.locator("main a").all()) assert(((await l.textContent()) ?? "").trim().length > 3, "link without text");
   assert((await page.locator("h2").count()) >= 4, "plate headings + index heading");
   for (const subject of ["Physics", "Chemistry", "Computer Science", "Biology"]) {
     assert(await page.getByRole("heading", { name: subject }).first().isVisible(), `missing index column ${subject}`);
   }
-  assert(await page.getByText("N-Body Orbital Mechanics").first().isVisible(), "planned item not shown");
-  assert((await page.locator("a:has-text('N-Body')").count()) === 0, "planned simulations must not be links");
+  assert(await page.getByText("Double Pendulum Chaos").first().isVisible(), "planned item not shown");
+  assert((await page.locator("a:has-text('Double Pendulum')").count()) === 0, "planned simulations must not be links");
   await page.getByRole("link", { name: /Hodgkin/ }).click();
   await page.waitForURL(/hodgkin-huxley/);
   await page.getByRole("link", { name: "← All simulations" }).click();
@@ -206,7 +206,7 @@ await test("home: phone index is collapsed and expands on tap", async (page) => 
   assert((await page.locator("details[open]").count()) === 0, "accordions should start collapsed");
   await page.locator("details summary").first().tap();
   assert((await page.locator("details[open]").count()) === 1, "tap should open one");
-  assert(await page.getByText("N-Body Orbital Mechanics").last().isVisible(), "item visible after opening");
+  assert(await page.getByText("Double Pendulum Chaos").last().isVisible(), "item visible after opening");
 }, { context: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
 
 await test("home: does not touch the GPU on load, and stays within size budgets", async (page) => {
@@ -248,7 +248,7 @@ await test("home: automated accessibility audit (axe) finds no violations, deskt
 });
 
 // ───────────────────────────── home: live plates ─────────────────────────────
-const PLATES = ["wave-interference", "cellular-automata", "hodgkin-huxley"];
+const PLATES = ["wave-interference", "n-body", "cellular-automata", "hodgkin-huxley"]; // catalog (= page) order
 const liveCanvases = (page) => page.locator("[data-testid=plate-live]");
 const waitLive = (page, id, timeout = 45_000) => page.waitForSelector(`[data-plate="${id}"] [data-testid=plate-live][data-state=ready]`, { timeout });
 /** Fraction of lit pixels in a plate's live canvas (a blank canvas would be ~0). */
@@ -265,7 +265,7 @@ const litFraction = (page, id) =>
     return lit / (bitmap.width * bitmap.height);
   }, id);
 
-await test("home plates: hover runs the real simulation (all three), one at a time, and leaving restores the poster", async (page) => {
+await test("home plates: hover runs the real simulation (all four), one at a time, and leaving restores the poster", async (page) => {
   await page.goto(url("/"));
   assert((await liveCanvases(page).count()) === 0, "no live canvas before any intent");
   for (const id of PLATES) {
@@ -284,7 +284,7 @@ await test("home plates: hover runs the real simulation (all three), one at a ti
   // Moving from the last plate to the first hands over: the first starts, the last stops.
   await page.locator(`[data-plate="${PLATES[0]}"]`).hover();
   await waitLive(page, PLATES[0]);
-  await page.waitForFunction((id) => document.querySelectorAll(`[data-plate="${id}"] canvas`).length === 0, PLATES[2], { timeout: 10_000 });
+  await page.waitForFunction((id) => document.querySelectorAll(`[data-plate="${id}"] canvas`).length === 0, PLATES.at(-1), { timeout: 10_000 });
   assert((await liveCanvases(page).count()) === 1, "exactly one live canvas after hand-over");
   await page.mouse.move(5, 5);
   await page.waitForFunction(() => document.querySelectorAll("[data-testid=plate-live]").length === 0, null, { timeout: 10_000 });
@@ -976,10 +976,152 @@ await test("cellular-automata: challenge flow (glider gun) — the population cl
   assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
 });
 
+// ───────────────────────────── n-body ─────────────────────────────
+const nbText = async (page, id) => (await text(page, `[data-testid=${id}]`)).trim();
+/** Energy drift readout ("+0.0004 %", with a real minus sign when negative) as a fraction. */
+const nbDrift = async (page) => parseFloat((await nbText(page, "nb-drift")).replace("−", "-")) / 100;
+const nbPeriod = async (page) => parseFloat(((await nbText(page, "nb-period")).match(/period ([\d.]+)/) ?? [])[1]);
+const waitPeriod = (page, timeout = 90_000) =>
+  page.waitForFunction(() => /period \d/.test(document.querySelector("[data-testid=nb-period]")?.textContent ?? ""), null, { timeout });
+
+await test("n-body: Earth's period is measured as 1 year on the GPU, energy conserved", async (page) => {
+  await open(page, "/physics/n-body?speed=2");
+  assert((await page.locator("canvas").count()) === 2, "WebGPU canvas + label overlay");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await waitPeriod(page);
+  const T = await nbPeriod(page);
+  assert(Math.abs(T - 1) < 0.005, `Earth period ${T} yr`);
+  assert(parseFloat(await nbText(page, "nb-e")) < 0.01, `eccentricity ${await nbText(page, "nb-e")}`);
+  assert(Math.abs(await nbDrift(page)) < 1e-4, `energy drift ${await nbText(page, "nb-drift")}`);
+  await shot(page, "nbody");
+});
+
+await test("n-body: inner planets — Mercury's measured period and the Kepler plot", async (page) => {
+  await open(page, "/physics/n-body?preset=inner-planets&speed=2");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await waitPeriod(page);
+  const T = await nbPeriod(page); // Mercury is selected (body 1)
+  assert(Math.abs(T - 0.2408) < 0.003, `Mercury period ${T} yr (88 days = 0.2408 yr)`);
+  await page.waitForFunction(() => [...document.querySelectorAll("figure svg[role=img]")].some((s) => /T² against a³/.test(s.getAttribute("aria-label") ?? "")), null, { timeout: 60_000 });
+  assert((await page.locator("figure svg circle").count()) >= 1, "Kepler plot has measured points");
+  await shot(page, "nbody-kepler");
+});
+
+await test("n-body: URL state, hostile links, copy link, save image, defaults", async (page) => {
+  await open(page, "/physics/n-body?preset=binary-star&speed=1.5&trails=0&integrator=euler");
+  assert((await slider(page, "Speed").inputValue()) === "1.5", "speed from URL");
+  assert(!(await page.getByLabel("Trails").isChecked()), "trails from URL");
+  assert(await page.getByRole("radio", { name: "Euler" }).isChecked(), "integrator from URL");
+  assert((await page.getByRole("button", { name: "Star A" }).count()) === 1, "preset bodies from URL");
+  await page.getByRole("button", { name: "Copy link" }).click();
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  assert(clip === page.url() && clip.includes("preset=binary-star"), `clipboard: ${clip}`);
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Save image" }).click()]);
+  const file = path.join(os.tmpdir(), `edusim-nbody-${Date.now()}.png`);
+  await download.saveAs(file);
+  const size = fs.statSync(file).size;
+  fs.rmSync(file);
+  assert(size > 5_000, `PNG too small (blank?): ${size}B`);
+  await page.getByRole("button", { name: "Defaults" }).click();
+  assert(!page.url().includes("?"), `URL not cleared: ${page.url()}`);
+  assert((await page.getByRole("button", { name: "Earth" }).count()) === 1, "default preset not restored");
+
+  await page.goto(url("/physics/n-body?mode=wormhole&speed=1e9&count=3&bodies=1,2,3&preset=nope"));
+  await page.locator("canvas").first().waitFor();
+  await page.waitForSelector("[data-testid=gpu-status][data-state=loading]", { state: "detached", timeout: 30_000 });
+  assert((await slider(page, "Speed").inputValue()) === "3", "speed should clamp to the slider's 3 yr/s");
+  assert((await page.getByRole("button", { name: "Earth" }).count()) === 1, "garbage setup should fall back to the default system");
+  await assertNoGpuProblem(page);
+});
+
+await test("n-body: dragging a body and its velocity arrow edits the setup (and the link)", async (page) => {
+  await open(page, "/physics/n-body");
+  const box = await page.locator("canvas").first().boundingBox();
+  const k = Math.min(box.width, box.height) / 2 / 1.25; // CSS px per AU: the default view frames 1.25 AU
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  // Earth starts at (1, 0) AU: drag it out to 1.4 AU.
+  await page.mouse.move(cx + k, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx + 1.4 * k, cy, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForFunction(() => location.search.includes("bodies="));
+  const moved = new URL(page.url()).searchParams.get("bodies").split(";")[1].split(",").map(Number);
+  assert(Math.abs(moved[1] - 1.4) < 0.03 && Math.abs(moved[2]) < 0.03, `Earth moved to ${moved.slice(1, 3)}`);
+  // Its arrow tip sits a quarter of r/v ahead: drag it twice as far, past escape speed.
+  const v = Math.hypot(moved[3], moved[4]);
+  const t = 0.25 * (1.4 / v);
+  const tip = [cx + 1.4 * k, cy - v * t * k];
+  const before = new URL(page.url()).searchParams.get("bodies");
+  await page.mouse.move(tip[0], tip[1]);
+  await page.mouse.down();
+  await page.mouse.move(tip[0], cy - 2.2 * v * t * k, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForFunction((b) => new URL(location.href).searchParams.get("bodies") !== b, before);
+  const faster = new URL(page.url()).searchParams.get("bodies").split(";")[1].split(",").map(Number);
+  assert(Math.hypot(faster[3], faster[4]) > 1.8 * v, `speed ${Math.hypot(faster[3], faster[4])} after dragging the arrow (was ${v})`);
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForSelector("[data-testid=nb-status]:has-text('escaping')", { timeout: 30_000 });
+});
+
+await test("n-body: sliders set distance and speed; the escape speed escapes", async (page) => {
+  await open(page, "/physics/n-body");
+  await slider(page, "Orbital speed").fill("8.6"); // below √2 × 6.28 ≈ 8.89: still bound
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForTimeout(1500);
+  assert((await page.locator("[data-testid=nb-status]").count()) === 0, "8.6 AU/yr should stay bound");
+  await slider(page, "Orbital speed").fill("9.1");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForSelector("[data-testid=nb-status]:has-text('escaping')", { timeout: 30_000 });
+  await slider(page, "Distance from star").fill("4");
+  await page.waitForTimeout(200);
+  const [sun, earth] = new URL(page.url()).searchParams.get("bodies").split(";").map((b) => b.split(",").map(Number));
+  assert(Math.abs(Math.hypot(earth[1] - sun[1], earth[2] - sun[2]) - 4) < 0.02, `distance in the link: ${page.url()}`);
+});
+
+await test("n-body: Euler pumps energy in; leapfrog keeps it", async (page) => {
+  await open(page, "/physics/n-body?speed=3&integrator=euler");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForFunction(() => parseFloat((document.querySelector("[data-testid=nb-drift]")?.textContent ?? "0").replace("−", "-")) > 1, null, { timeout: 60_000 });
+  await page.getByRole("radio", { name: "Leapfrog" }).check();
+  await page.waitForTimeout(4000);
+  assert(Math.abs(await nbDrift(page)) < 1e-4, `leapfrog drift ${await nbText(page, "nb-drift")}`);
+});
+
+await test("n-body: galaxies — every preset runs on the GPU and conserves energy", async (page) => {
+  await open(page, "/physics/n-body?mode=galaxy&count=1024&galaxySpeed=2");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  for (const preset of ["Two colliding galaxies", "Rotating disk galaxy", "Star cluster (Plummer)"]) {
+    await page.locator("select").first().selectOption({ label: preset });
+    await page.waitForFunction(() => parseFloat(document.querySelector("[data-testid=nb-time]")?.textContent ?? "0") > 0.5, null, { timeout: 60_000 });
+    assert(Math.abs(await nbDrift(page)) < 0.01, `${preset}: energy drift ${await nbText(page, "nb-drift")}`);
+    await assertNoGpuProblem(page, ` (${preset})`);
+  }
+  await shot(page, "nbody-galaxy");
+});
+
+await test("n-body: challenge flow (circular orbit) with persistence", async (page) => {
+  await open(page, "/physics/n-body");
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /Make the orbit a circle/ }).click();
+  await page.getByLabel("less speed than Earth").check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  assert(page.url().includes("bodies="), `setup not applied: ${page.url()}`);
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "goal met too early");
+  await slider(page, "Orbital speed").fill("4.44");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 90_000 });
+  assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
+  await page.reload();
+  await page.locator("canvas").first().waitFor();
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  assert((await page.locator("text=/1 of 4 done/").count()) === 1, "completion not persisted");
+});
+
 // ───────────────────────────── resilience ─────────────────────────────
 await test("navigation churn: open/close each simulation 3 times without errors", async (page) => {
   for (let i = 0; i < 3; i++) {
-    for (const route of ["/physics/wave-interference", "/biology/hodgkin-huxley", "/cs/cellular-automata"]) {
+    for (const route of ["/physics/wave-interference", "/biology/hodgkin-huxley", "/cs/cellular-automata", "/physics/n-body"]) {
       await open(page, route);
       await page.getByRole("link", { name: "← All simulations" }).click();
       await page.waitForURL((u) => u.pathname === "/");
@@ -988,7 +1130,7 @@ await test("navigation churn: open/close each simulation 3 times without errors"
 });
 
 await test("no WebGPU: every simulation explains the problem instead of a blank canvas", async (page) => {
-  for (const route of ["/physics/wave-interference", "/biology/hodgkin-huxley", "/cs/cellular-automata"]) {
+  for (const route of ["/physics/wave-interference", "/biology/hodgkin-huxley", "/cs/cellular-automata", "/physics/n-body"]) {
     await page.goto(url(route));
     await page.waitForSelector("[data-testid=gpu-status][data-state=unsupported]");
     assert((await text(page, "[data-testid=gpu-status]")).includes("WebGPU isn’t available"), `${route}: unsupported message missing`);
@@ -997,14 +1139,14 @@ await test("no WebGPU: every simulation explains the problem instead of a blank 
 }, { initScript: () => Object.defineProperty(Navigator.prototype, "gpu", { get: () => undefined, configurable: true }) });
 
 await test("phone viewport: no horizontal overflow, controls reachable, tap works", async (page) => {
-  for (const route of ["/", "/physics/wave-interference", "/biology/hodgkin-huxley", "/cs/cellular-automata"]) {
+  for (const route of ["/", "/physics/wave-interference", "/biology/hodgkin-huxley", "/cs/cellular-automata", "/physics/n-body"]) {
     await page.goto(url(route));
-    if (route !== "/") await page.locator("canvas").waitFor();
+    if (route !== "/") await page.locator("canvas").first().waitFor();
     await page.waitForTimeout(800);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert(overflow <= 1, `${route}: horizontal overflow ${overflow}px`);
     if (route !== "/") {
-      const canvasHeight = (await page.locator("canvas").boundingBox()).height;
+      const canvasHeight = (await page.locator("canvas").first().boundingBox()).height;
       assert(canvasHeight >= 200, `${route}: canvas only ${canvasHeight}px tall`);
       await page.getByRole("button", { name: /^(Pause|Play)$/ }).scrollIntoViewIfNeeded();
       await page.getByRole("button", { name: /^(Pause|Play)$/ }).tap();

@@ -25,7 +25,7 @@ export const SUBJECTS: Record<Subject, { label: string }> = {
 export const SIMULATIONS: SimMeta[] = [
   // Physics
   { id: "wave-interference", title: "Wave Interference & Diffraction", subject: "physics", difficulty: "easy", description: "Explore how waves combine, cancel, and create patterns through slits.", tagline: "Slits, fringes and the λL/d rule — measured live.", posterAlt: "Bright and dark interference fringes fanning out from a double slit", path: "/physics/wave-interference", implemented: true },
-  { id: "n-body", title: "N-Body Orbital Mechanics", subject: "physics", difficulty: "medium", description: "Simulate gravitational systems with thousands of particles.", path: "/physics/n-body", implemented: false },
+  { id: "n-body", title: "N-Body Orbital Mechanics", subject: "physics", difficulty: "medium", description: "Simulate gravitational systems with thousands of particles.", tagline: "Orbits, Kepler’s laws and colliding galaxies.", posterAlt: "Two spiral galaxies of glowing stars colliding", path: "/physics/n-body", implemented: true },
   { id: "fluid-dynamics", title: "Fluid Dynamics", subject: "physics", difficulty: "hard", description: "Interactive Navier-Stokes fluid simulation.", path: "/physics/fluid-dynamics", implemented: false },
   { id: "quantum-wave", title: "Quantum Wave Function", subject: "physics", difficulty: "medium", description: "Visualize quantum tunneling and wave-particle duality.", path: "/physics/quantum-wave", implemented: false },
   { id: "double-pendulum", title: "Double Pendulum Chaos", subject: "physics", difficulty: "easy", description: "Explore deterministic chaos and sensitivity to initial conditions.", path: "/physics/double-pendulum", implemented: false },

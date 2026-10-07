@@ -1,5 +1,15 @@
 # N-Body Orbital Mechanics — research and implementation plan
 
+> **Status: implemented** (orbit lab + galaxies, 4 challenges). Where the build differs from this plan:
+> - Energies and momenta are computed on the CPU from a read-back instead of a GPU tree reduction: at ≤ 16 384
+>   bodies the read-back is ≤ 768 KB a few times a second, simpler, and checked by the same twin functions.
+> - Positions reach the vertex shader through vertex buffers (a GPU-to-GPU copy each frame), because
+>   compatibility-mode adapters allow no storage buffers in vertex shaders — found by the GPU tests.
+> - Trails are 1-px line strips with alpha blending (additive blending saturated orbits traced many times).
+> - No first-run benchmark or close-encounter guard: a per-frame cap on pair interactions keeps big clouds
+>   responsive, and softening plus a small fixed step handle close passes in the orbit lab.
+> - Orbit-lab samples are taken after every ≤ 16 steps: sampling once per frame aliased Mercury's period on slow GPUs.
+
 The fourth simulation (catalog id `n-body`, route `/physics/n-body`, already listed as "in preparation").
 It must ship at the same bar as the other three: a TypeScript twin of every shader, GPU-vs-twin tests,
 shareable settings, a measurement the tests prove correct, three guided challenges, e2e scenarios, a poster
