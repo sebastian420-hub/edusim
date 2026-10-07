@@ -74,12 +74,14 @@ fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
         dn = min(dn, sdLine(p, plot(k0, s0.n), plot(k0 + 1u, s1.n)));
     }
 
+    // Okabe–Ito colours (distinguishable with every common colour-vision deficiency); the voltage, the main
+    // trace, is also drawn thicker so it never depends on colour alone. Keep in sync with LEGEND in controls.tsx.
     let line_width = 1.2; // px
     let glow = 3.0;       // px
-    color += vec3f(0.2, 1.0, 0.4) * smoothstep(glow, 0.0, dV - line_width); // voltage
-    color += vec3f(1.0, 0.2, 0.2) * smoothstep(glow, 0.0, dm - line_width); // m gate
-    color += vec3f(0.2, 0.4, 1.0) * smoothstep(glow, 0.0, dh - line_width); // h gate
-    color += vec3f(1.0, 0.8, 0.2) * smoothstep(glow, 0.0, dn - line_width); // n gate
+    color += vec3f(0.337, 0.706, 0.914) * smoothstep(glow, 0.0, dV - 2.0 * line_width); // voltage: sky blue
+    color += vec3f(0.902, 0.624, 0.0) * smoothstep(glow, 0.0, dm - line_width);   // m gate: orange
+    color += vec3f(0.8, 0.475, 0.655) * smoothstep(glow, 0.0, dh - line_width);   // h gate: reddish purple
+    color += vec3f(0.941, 0.894, 0.259) * smoothstep(glow, 0.0, dn - line_width); // n gate: yellow
 
     return vec4f(color, 1.0);
 }

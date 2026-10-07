@@ -563,7 +563,7 @@ await test("hodgkin-huxley: runs, pauses, presets and sliders respond", async (p
 
 await test("hodgkin-huxley: TTX flattens the spike (pixel check on the voltage trace)", async (page) => {
   await open(page, "/biology/hodgkin-huxley");
-  // Count bright-green (voltage trace) pixels where spikes peak: the top quarter, in the stretch of the canvas
+  // Count sky-blue (voltage trace) pixels where spikes peak: the top quarter, in the stretch of the canvas
   // between the legend (left) and the readout card (right), so overlay text is not counted.
   const spikeCount = async () => {
     const png = await canvasPixels(page);
@@ -575,7 +575,7 @@ await test("hodgkin-huxley: TTX flattens the spike (pixel check on the voltage t
       const x0 = Math.floor(img.width * 0.45);
       const { data } = g.getImageData(x0, 0, Math.floor(img.width * 0.72) - x0, Math.floor(img.height * 0.25));
       let n = 0;
-      for (let i = 0; i < data.length; i += 4) if (data[i + 1] > 180 && data[i] < 120 && data[i + 2] < 140) n++;
+      for (let i = 0; i < data.length; i += 4) if (data[i + 2] > 180 && data[i] < 140 && data[i + 1] > 120 && data[i + 1] < 225) n++; // sky-blue voltage trace
       return n;
     }, png.toString("base64"));
   };
@@ -796,7 +796,7 @@ await test("cellular-automata: Gosper gun is alive after 100 generations (rule c
   await page.getByLabel("Speed").fill("60");
   const before = await canvasPixels(page);
   await page.getByRole("button", { name: "Play" }).click();
-  await page.waitForFunction(() => /Generation\s*\n?\s*(\d+)/.test(document.body.innerText) && Number(document.body.innerText.match(/Generation\s*\n?\s*(\d+)/)[1]) >= 100, null, { timeout: 30_000 });
+  await page.waitForFunction(() => Number([...document.querySelectorAll("span")].find((s) => s.textContent === "Generation")?.nextElementSibling?.textContent ?? 0) >= 100, null, { timeout: 30_000 });
   assert(!await same(page, before, await canvasPixels(page)), "pattern did not evolve");
 });
 
@@ -895,7 +895,7 @@ await test("cellular-automata: editing the grid restarts the measurement from wh
   await page.getByRole("button", { name: "Pause" }).click();
   await page.waitForTimeout(400);
   await page.getByRole("button", { name: "Draw", exact: true }).click();
-  const { cx, cy, cell } = await zoomToCells(page);
+  const { cx, cy, cell } = await zoomToCells(page, 0); // the blinker already opens framed (zoomed in)
   await clickAt(page, cx + 6 * cell, cy + 6 * cell); // one extra, isolated cell far from the blinker
   await waitPopulation(page, 4);
   assert(/^Evolving/.test(await caStatus(page)), `old verdict survived an edit: "${await caStatus(page)}"`);
@@ -1037,6 +1037,7 @@ await test("n-body: URL state, hostile links, copy link, save image, defaults", 
 
 await test("n-body: dragging a body and its velocity arrow edits the setup (and the link)", async (page) => {
   await open(page, "/physics/n-body");
+  await page.waitForFunction(() => /\d/.test(document.querySelector("[data-testid=nb-time]")?.textContent ?? "")); // first measurement in: labels and arrows are placed
   const box = await page.locator("canvas").first().boundingBox();
   const k = Math.min(box.width, box.height) / 2 / 1.25; // CSS px per AU: the default view frames 1.25 AU
   const cx = box.x + box.width / 2;
@@ -1233,6 +1234,89 @@ await test("phone: pinching over a planet zooms instead of dragging it (n-body)"
   await pinch(page, [[cx + k, cy], [cx - 60, cy]], [[cx + k + 40, cy], [cx - 100, cy]]); // first finger lands on Earth
   assert(!page.url().includes("bodies="), `a pinch edited the setup: ${page.url()}`);
   await assertNoGpuProblem(page);
+}, { context: PHONE });
+
+// ───────────────────────────── accessibility & polish (phase B) ─────────────────────────────
+const SIM_ROUTES = ["/physics/wave-interference", "/physics/n-body", "/cs/cellular-automata", "/biology/hodgkin-huxley"];
+
+await test("a11y: every simulation page passes the axe audit, desktop and phone", async (page) => {
+  const problems = [];
+  for (const viewport of [{ width: 1360, height: 860 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    for (const route of SIM_ROUTES) {
+      await open(page, route);
+      const result = await new AxeBuilder({ page }).analyze();
+      for (const v of result.violations) problems.push(`${route} at ${viewport.width}px: ${v.id} (${v.nodes.length}): ${v.help} — ${v.nodes.slice(0, 3).map((n) => n.target).join(", ")}`);
+    }
+  }
+  assert(problems.length === 0, problems.join("\n      "));
+});
+
+await test("a11y: keyboard focus is always visible", async (page) => {
+  for (const route of SIM_ROUTES) {
+    await open(page, route);
+    await page.locator("body").focus();
+    for (let i = 0; i < 14; i++) {
+      await page.keyboard.press("Tab");
+      const style = await page.evaluate(() => {
+        const el = document.activeElement;
+        if (!el || el === document.body || el.tagName === "NEXTJS-PORTAL") return null; // Next's dev overlay
+        const cs = getComputedStyle(el);
+        return { tag: el.tagName, text: (el.textContent ?? "").trim().slice(0, 20), outline: cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0, ring: cs.boxShadow !== "none" };
+      });
+      if (!style) continue;
+      assert(style.outline || style.ring, `${route}: focused ${style.tag} "${style.text}" has no visible focus indicator`);
+    }
+  }
+});
+
+await test("a11y: each simulation describes its canvas for screen readers (polite live region)", async (page) => {
+  const expected = {
+    "/physics/wave-interference": /Double slit, amplitude view\. Bright fringes .* units apart/,
+    "/physics/n-body": /Year \d+\.\d\. Earth: /,
+    "/cs/cellular-automata": /Generation \d+: 36 live cells\./,
+    "/biology/hodgkin-huxley": /fires steadily at \d+ spikes per second/,
+  };
+  for (const route of SIM_ROUTES) {
+    await open(page, route);
+    await page.waitForFunction((src) => new RegExp(src).test(document.querySelector("[data-testid=sim-summary]")?.textContent ?? ""), expected[route].source, { timeout: 15_000 });
+    assert((await page.locator("[aria-live=polite][data-testid=sim-summary]").count()) === 1, `${route}: live region`);
+  }
+});
+
+await test("reduced motion: simulations start paused", async (page) => {
+  for (const route of SIM_ROUTES) {
+    await open(page, route);
+    assert((await page.getByRole("button", { name: /^(Play|Pause)$/ }).textContent()) === "Play", `${route} should start paused`);
+  }
+  await open(page, "/biology/hodgkin-huxley");
+  const frozen = await settle(page);
+  await page.waitForTimeout(800);
+  assert(await same(page, frozen, await canvasPixels(page)), "the trace moves although paused");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await waitForChange(page, frozen, "Play should still start it");
+}, { context: { reducedMotion: "reduce" } });
+
+await test("cellular-automata: opens framed on its pattern; Fit grid and Fit pattern", async (page) => {
+  await open(page, "/cs/cellular-automata");
+  const zoom = async () => parseFloat((await text(page, "text=/Zoom:/")).match(/Zoom: ([\d.]+)/)[1]);
+  const opened = await zoom();
+  assert(opened > 3 && opened < 6, `the Gosper gun (36 × 9 cells) should fill the view, zoom ${opened}`);
+  await page.getByRole("button", { name: "Fit grid" }).click();
+  assert((await zoom()) === 1, "Fit grid frames the whole grid");
+  await page.getByRole("button", { name: "Fit pattern" }).click();
+  await page.waitForFunction((z) => parseFloat(document.body.innerText.match(/Zoom: ([\d.]+)/)?.[1] ?? "0") > z, 3);
+  const zoomIs = (test) => page.waitForFunction((src) => new Function("z", `return ${src}`)(parseFloat(document.body.innerText.match(/Zoom: ([\d.]+)/)?.[1] ?? "0")), test, { timeout: 10_000 });
+  await page.getByLabel("Starting pattern").selectOption("Block");
+  await zoomIs("z > 10"); // a 2×2 block opens close up
+  await page.getByRole("button", { name: "Random" }).click();
+  await zoomIs("z === 1"); // a random soup shows the whole grid
+});
+
+await test("phone: sliders have a finger-sized hit area", async (page) => {
+  await open(page, "/biology/hodgkin-huxley");
+  const h = (await slider(page, "Temperature").boundingBox()).height;
+  assert(h >= 24, `slider is ${h}px tall`);
 }, { context: PHONE });
 
 // ───────────────────────────── summary ─────────────────────────────

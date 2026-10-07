@@ -36,7 +36,15 @@ interface SimLayoutProps {
   onReset?: () => void;
   /** When provided a Step button is shown; stepping pauses the simulation. */
   onStep?: () => void;
+  /**
+   * One sentence on what the canvas shows right now ("Firing at 68 Hz"), for screen readers. Announced
+   * politely, at most every few seconds, so a running simulation does not talk over everything else.
+   */
+  summary?: string;
 }
+
+/** Minimum time between two announcements of the canvas summary. */
+const ANNOUNCE_EVERY_MS = 5000;
 
 const DIFFICULTY_STYLES: Record<Difficulty, string> = {
   easy: "bg-green-500/20 text-green-400 border-green-500/20",
@@ -76,6 +84,7 @@ export function SimLayout({
   onPlayPause,
   onReset,
   onStep,
+  summary,
 }: SimLayoutProps) {
   const [ownPlaying, setOwnPlaying] = useState(initiallyPlaying);
   const playing = controlledPlaying ?? ownPlaying;
@@ -159,9 +168,33 @@ export function SimLayout({
 
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
+  // Throttled copy of `summary` for the live region.
+  // One pending timer at a time, which announces whatever the summary is when it fires.
+  const [announced, setAnnounced] = useState("");
+  const latestSummary = useRef(summary);
+  const lastAnnounce = useRef(0);
+  const pendingAnnounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    latestSummary.current = summary;
+    if (!summary || pendingAnnounce.current) return;
+    const wait = Math.max(0, lastAnnounce.current + ANNOUNCE_EVERY_MS - Date.now());
+    pendingAnnounce.current = setTimeout(() => {
+      pendingAnnounce.current = undefined;
+      lastAnnounce.current = Date.now();
+      setAnnounced(latestSummary.current ?? "");
+    }, wait);
+  }, [summary]);
+  useEffect(
+    () => () => {
+      clearTimeout(pendingAnnounce.current);
+      pendingAnnounce.current = undefined; // so a remount (React strict mode) can schedule again
+    },
+    [],
+  );
+
   const tabClass = (active: boolean) =>
     `flex-1 border-b-2 px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors ${
-      active ? "border-blue-500 text-slate-100" : "border-transparent text-slate-500 hover:text-slate-300"
+      active ? "border-blue-500 text-slate-100" : "border-transparent text-slate-400 hover:text-slate-200"
     }`;
 
   return (
@@ -237,6 +270,11 @@ export function SimLayout({
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <main className="relative min-h-0 flex-1 bg-black">
           {children}
+          {summary && (
+            <p className="sr-only" aria-live="polite" data-testid="sim-summary">
+              {announced}
+            </p>
+          )}
           {quality < 1 && status.state === "ready" && (
             <div
               data-testid="quality-badge"
@@ -285,7 +323,7 @@ export function SimLayout({
             className="flex shrink-0 touch-none flex-col items-center gap-1 pt-2 pb-1 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 md:hidden"
           >
             <span aria-hidden className="h-1 w-10 rounded-full bg-slate-600" />
-            <span aria-hidden className="text-[10px] uppercase tracking-wider text-slate-500">
+            <span aria-hidden className="text-[10px] uppercase tracking-wider text-slate-400">
               {drawer === "peek" ? "Controls ▲" : drawer === "half" ? "More ▲" : "Less ▼"}
             </span>
           </button>

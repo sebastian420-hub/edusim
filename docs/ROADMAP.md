@@ -43,10 +43,11 @@ Done: `git push` runs `pnpm verify` (`.githooks/pre-push`, installed by `pnpm in
 static site to `out/` that passes the browser smoke test from a plain file server; `pnpm smoke:local` is the
 one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessions.
 
-## Phase B — Interaction polish (1–2 days) · partly done (shortcuts, adaptive quality, touch)
+## Phase B — Interaction polish (1–2 days) · ✅ done
 
-- **Cellular automata opens readable:** "fit to content" zoom on load/pattern change instead of a
-  tiny pattern in a 256² grid; "Fit grid" and "Fit pattern" buttons.
+- ✅ **Cellular automata opens readable:** a library pattern is framed on load (at least 24 cells across, so a
+  block opens close up and the Gosper gun fills the view); random soups and empty grids show the whole grid;
+  "Fit pattern" (reads the grid back and frames the live cells) and "Fit grid" buttons.
 - ✅ **Keyboard shortcuts** for every sim (in `SimLayout`): Space play/pause, `.` step, `R` reset, `?` help.
 - ✅ **Touch:** pinch-zoom and two-finger pan for Cellular Automata and N-body (`lib/gestures.ts`; a touch only
   starts drawing once it moves, so a second finger can still turn it into a pinch); the sidebar is a bottom drawer
@@ -55,9 +56,12 @@ one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessi
 - ✅ **Adaptive quality + frame pacing:** bounded frame queue (Pause stays responsive on slow GPUs) and a
   governor that lowers render resolution (down to 35%) when GPU frames cost too much, restoring it only when the
   predicted cost fits; badge + `localStorage edusim:quality=full` to pin full resolution.
-- **Accessibility basics:** visible focus everywhere, an `aria-live` text summary of what the canvas
-  shows (e.g. "Firing at 68 Hz", "Generation 120, 412 live cells"), colour-blind-safe CA themes and
-  HH trace colours, respect `prefers-reduced-motion` (start paused).
+- ✅ **Accessibility basics:** a global `:focus-visible` outline (and a keyboard-tab test on every sim); a
+  one-sentence summary of each canvas (e.g. "The neuron fires steadily at 68 spikes per second", "Generation 120:
+  412 live cells. Still life.") in a polite live region, announced at most every 5 s;
+  Okabe–Ito colours for the Hodgkin–Huxley traces with the voltage drawn thicker (the CA themes are single-hue on
+  black, so they never depended on hue); simulations start paused under `prefers-reduced-motion`; every
+  simulation page passes axe on desktop and phone; finger-sized slider thumbs on touch screens.
 
 ## Phase C — Shareable & persistent state (1 day) · ✅ done for all three simulations
 

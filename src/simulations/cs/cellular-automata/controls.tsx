@@ -8,6 +8,7 @@ import { createPinchTracker } from "@/lib/gestures";
 import { SimLayout } from "@/components/SimLayout";
 import { useGpuSim } from "@/lib/gpu/useGpuSim";
 import { usePersistedParams } from "@/lib/usePersistedParams";
+import { usePlaying } from "@/lib/usePlaying";
 import { CA_CHALLENGES } from "./challenges";
 import { niceMax } from "./graph";
 import { patterns } from "./patterns";
@@ -67,7 +68,7 @@ export default function CellularAutomataControls() {
 
   const [settings, setSettings] = usePersistedParams(SIM_ID, CA_SCHEMA, CA_DEFAULTS);
   const [tool, setTool] = useState<Tool>("pan");
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying] = usePlaying(sim, false);
   const dragging = useRef(false);
   const lastPointer = useRef({ x: 0, y: 0 });
 
@@ -83,10 +84,6 @@ export default function CellularAutomataControls() {
     if (sim) startFrom(sim, settings.pattern);
   }, [sim, settings.pattern]);
 
-  useEffect(() => {
-    if (playing) sim?.play();
-    else sim?.pause();
-  }, [sim, playing]);
 
   const update = (patch: Partial<CASettings>) => setSettings((prev) => ({ ...prev, ...patch }));
 
@@ -277,6 +274,15 @@ export default function CellularAutomataControls() {
         </div>
       </fieldset>
 
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={() => void sim?.fitPattern()} className="rounded bg-slate-800 px-2 py-1.5 text-sm text-slate-300 transition-colors hover:bg-slate-700">
+          Fit pattern
+        </button>
+        <button type="button" onClick={() => sim?.fitGrid()} className="rounded bg-slate-800 px-2 py-1.5 text-sm text-slate-300 transition-colors hover:bg-slate-700">
+          Fit grid
+        </button>
+      </div>
+
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium text-slate-200">Color theme</span>
         <select
@@ -346,8 +352,13 @@ export default function CellularAutomataControls() {
     </>
   );
 
+  const summary = stats
+    ? `Generation ${stats.generation}: ${stats.population.toLocaleString("en-US")} live cells. ${describeStatus(stats.status)}.`
+    : `Generation ${generation}.`;
+
   return (
     <SimLayout
+      summary={summary}
       title="Cellular Automata"
       subject="cs"
       difficulty="easy"

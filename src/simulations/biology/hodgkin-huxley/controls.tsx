@@ -7,6 +7,7 @@ import { ParameterSlider } from "@/components/ParameterSlider";
 import { SimLayout } from "@/components/SimLayout";
 import { useGpuSim } from "@/lib/gpu/useGpuSim";
 import { usePersistedParams } from "@/lib/usePersistedParams";
+import { usePlaying } from "@/lib/usePlaying";
 import { HH_CHALLENGES } from "./challenges";
 import { fiAnalysis, PULSE_PERIOD, sampleAt, WINDOW_MS } from "./hh";
 import { computeReadouts, HH_DEFAULTS, HH_SCHEMA, toParams } from "./settings";
@@ -24,10 +25,11 @@ const PRESETS: Record<string, { label: string; settings: Partial<HHSettings> }> 
 };
 
 const LEGEND = [
-  { color: "bg-[#33ff66]", label: "Voltage (mV)" },
-  { color: "bg-[#ff3333]", label: "m gate" },
-  { color: "bg-[#3366ff]", label: "h gate" },
-  { color: "bg-[#ffcc33]", label: "n gate" },
+  // Okabe–Ito palette, as in render.wgsl: safe for colour-vision deficiencies.
+  { color: "bg-[#56b4e9]", label: "Voltage (mV)" },
+  { color: "bg-[#e69f00]", label: "m gate" },
+  { color: "bg-[#cc79a7]", label: "h gate" },
+  { color: "bg-[#f0e442]", label: "n gate" },
 ];
 
 /** Voltage axis ticks, positioned like render.wgsl does: -100 mV (bottom) to +60 mV (top). */
@@ -47,6 +49,7 @@ const STIMULI = [
 
 export default function HHControls() {
   const { canvasRef, status, sim, quality } = useGpuSim(createHodgkinHuxley);
+  const [playing, setPlaying] = usePlaying(sim, true);
   const [settings, setSettings, resetSettings] = usePersistedParams(SIM_ID, HH_SCHEMA, HH_DEFAULTS);
   const params = useMemo(() => toParams(settings), [settings]);
 
@@ -177,8 +180,15 @@ export default function HHControls() {
     </>
   );
 
+  const summary = dc
+    ? readouts.rate > 0
+      ? `The neuron fires steadily at ${readouts.rate.toFixed(0)} spikes per second.`
+      : "The neuron is silent: no repeated spikes at this current."
+    : `Pulse stimulus: ${readouts.spikesPerCycle} spike${readouts.spikesPerCycle === 1 ? "" : "s"} per ${PULSE_PERIOD} ms cycle.`;
+
   return (
     <SimLayout
+      summary={summary}
       title="Hodgkin–Huxley Neuron"
       subject="biology"
       difficulty="medium"
@@ -203,7 +213,8 @@ export default function HHControls() {
         resetSettings();
         sim?.reset();
       }}
-      onPlayPause={(playing) => (playing ? sim?.play() : sim?.pause())}
+      playing={playing}
+      onPlayPause={setPlaying}
       onReset={() => sim?.reset()}
     >
       <div className="absolute inset-0" onPointerMove={onPointerMove} onPointerLeave={() => setHover(null)}>
@@ -213,7 +224,7 @@ export default function HHControls() {
         {V_TICKS.map((t) => (
           <span
             key={t.mV}
-            className="pointer-events-none absolute left-1.5 font-mono text-[10px] text-green-300/80"
+            className="pointer-events-none absolute left-1.5 font-mono text-[10px] text-sky-300/80"
             style={{ top: `${vToPercent(t.mV)}%`, transform: t.mV === -100 ? "translateY(-110%)" : "translateY(-50%)" }}
           >
             {t.label}
@@ -232,7 +243,7 @@ export default function HHControls() {
         {/* Firing-rate readout */}
         <div className="pointer-events-none absolute right-3 top-3 rounded bg-black/60 px-2.5 py-1.5 font-mono text-[11px] leading-snug text-slate-200" aria-live="polite">
           <div className="text-slate-400">{dc ? "Steady firing rate (model)" : "Response to stimulus (model)"}</div>
-          <div className="text-base font-bold text-green-300" data-testid="hh-rate">
+          <div className="text-base font-bold text-sky-300" data-testid="hh-rate">
             {rateText}
           </div>
         </div>
@@ -248,10 +259,10 @@ export default function HHControls() {
                 style={hover > 0.7 ? { right: `${(1 - hover) * 100 + 1}%` } : { left: `${hover * 100 + 1}%` }}
               >
                 <div className="text-slate-400">{cursor.msAgo.toFixed(1)} ms ago</div>
-                <div className="text-[#33ff66]">V = {cursor.V.toFixed(1)} mV</div>
-                <div className="text-[#ff3333]">m = {cursor.m.toFixed(3)}</div>
-                <div className="text-[#6688ff]">h = {cursor.h.toFixed(3)}</div>
-                <div className="text-[#ffcc33]">n = {cursor.n.toFixed(3)}</div>
+                <div className="text-[#56b4e9]">V = {cursor.V.toFixed(1)} mV</div>
+                <div className="text-[#e69f00]">m = {cursor.m.toFixed(3)}</div>
+                <div className="text-[#cc79a7]">h = {cursor.h.toFixed(3)}</div>
+                <div className="text-[#f0e442]">n = {cursor.n.toFixed(3)}</div>
               </div>
             )}
           </>

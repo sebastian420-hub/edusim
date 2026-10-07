@@ -15,14 +15,15 @@ export interface ParameterSliderProps {
   className?: string;
 }
 
+/** accent-* colours the native thumb; text-* is the thumb colour of the larger touch-screen thumb (globals.css). */
 const ACCENTS: Record<NonNullable<ParameterSliderProps["color"]>, string> = {
-  blue: "accent-blue-500",
-  green: "accent-green-500",
-  purple: "accent-purple-500",
-  rose: "accent-rose-500",
-  red: "accent-red-500",
-  amber: "accent-amber-500",
-  slate: "accent-slate-500",
+  blue: "accent-blue-500 text-blue-500",
+  green: "accent-green-500 text-green-500",
+  purple: "accent-purple-500 text-purple-500",
+  rose: "accent-rose-500 text-rose-500",
+  red: "accent-red-500 text-red-500",
+  amber: "accent-amber-500 text-amber-500",
+  slate: "accent-slate-500 text-slate-500",
 };
 
 function decimalsOf(step: number): number {
@@ -64,9 +65,9 @@ export function ParameterSlider({
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className={`h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-slate-700 ${ACCENTS[color]}`}
+        className={`slider h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-slate-700 ${ACCENTS[color]}`}
       />
-      <div className="flex justify-between px-0.5 text-[10px] text-slate-500">
+      <div className="flex justify-between px-0.5 text-[10px] text-slate-400">
         <span>{min}</span>
         <span>{max}</span>
       </div>
