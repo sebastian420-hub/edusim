@@ -8,6 +8,7 @@ import { createPinchTracker } from "@/lib/gestures";
 import { SimLayout } from "@/components/SimLayout";
 import { useGpuSim } from "@/lib/gpu/useGpuSim";
 import { usePersistedParams } from "@/lib/usePersistedParams";
+import { usePlaying } from "@/lib/usePlaying";
 import { NBODY_CHALLENGES, readoutsFor } from "./challenges";
 import { circularSpeed, primaryIndex } from "./nbody";
 import type { Body } from "./nbody";
@@ -105,7 +106,7 @@ export default function NBodyControls() {
   // Two fingers pan and pinch-zoom; one finger keeps dragging bodies, arrows or the view.
   const [pinch] = useState(createPinchTracker);
   const [settings, setSettings] = usePersistedParams(SIM_ID, NBODY_SCHEMA, NBODY_DEFAULTS);
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying] = usePlaying(sim, false);
   const [selected, setSelected] = useState<number | null>(1);
   const [arrows, setArrows] = useState(true);
   const drag = useRef<{ kind: "body" | "arrow" | "pan"; index: number; base: Body[]; last: Body[]; x: number; y: number; arrowTime: number } | null>(null);
@@ -151,10 +152,6 @@ export default function NBodyControls() {
   useEffect(() => {
     sim?.setTrails(settings.trails);
   }, [sim, settings.trails]);
-  useEffect(() => {
-    if (playing) sim?.play();
-    else sim?.pause();
-  }, [sim, playing]);
 
   const update = (patch: Partial<NBodySettings>) => setSettings((prev) => ({ ...prev, ...patch }));
 
@@ -470,8 +467,20 @@ export default function NBodyControls() {
     </>
   );
 
+  const summary = !stats
+    ? undefined
+    : orbit
+      ? `Year ${stats.time.toFixed(1)}. ` +
+        (selectedIndex !== null && !isPrimary && selectedReadout
+          ? selectedReadout.energy >= 0
+            ? `${names[selectedIndex]} is escaping.`
+            : `${names[selectedIndex]}: ${selectedReadout.period !== undefined ? `measured period ${selectedReadout.period.toFixed(2)} years, ` : ""}eccentricity ${selectedReadout.e.toFixed(2)}.`
+          : `${setup.length} bodies.`)
+      : `${stats.n.toLocaleString("en-US")} stars, time ${stats.time.toFixed(1)}. Total energy changed by ${signedPercent(stats.drift)}.`;
+
   return (
     <SimLayout
+      summary={summary}
       title="N-Body Orbital Mechanics"
       subject="physics"
       difficulty="medium"

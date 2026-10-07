@@ -42,7 +42,7 @@ export const HH_CHALLENGES: Challenge<HHSettings, HHReadouts>[] = [
       description: "Keep the current at 15 µA/cm² and K⁺ conductance at 36, and lower Na⁺ conductance until the neuron stops firing.",
       check: ({ params, readouts }) => params.pulse_mode === 0 && params.I_inj >= 15 && params.g_K === 36 && readouts.rate === 0,
     },
-    hint: "Drag the Na⁺ conductance slider (TTX) down. Watch the green voltage trace flatten out.",
+    hint: "Drag the Na⁺ conductance slider (TTX) down. Watch the thick blue voltage trace flatten out.",
     explanation:
       "The upstroke of a spike is a sodium current: depolarisation opens Na⁺ channels, which depolarise the cell further. With most of those channels blocked the positive feedback can’t start, so the same current only produces a passive bump. That’s why TTX is so deadly — nerves can no longer carry signals.",
   },

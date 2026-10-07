@@ -64,6 +64,10 @@ export interface CellularAutomataHandle extends SimHandle {
   clear(): void;
   randomize(): void;
   loadPattern(name: string): void;
+  /** Frames the whole grid. */
+  fitGrid(): void;
+  /** Frames the live cells (reads the grid back from the GPU). */
+  fitPattern(): Promise<void>;
   panBy(dxCss: number, dyCss: number): void;
   zoomAt(factor: number, xCss: number, yCss: number): void;
   /** Writes cells along a stroke; call `endStroke` when the pointer is released. */
@@ -117,6 +121,35 @@ export function createCellularAutomata(
     centerY = size / 2;
     zoom = 1;
     onZoom?.(zoom);
+  };
+
+  /** Frames the cell rectangle [x0, x1) × [y0, y1) with some margin; small patterns get at least 24 cells across. */
+  const fitBounds = (x0: number, y0: number, x1: number, y1: number) => {
+    const w = Math.max((x1 - x0) * 1.6, 24);
+    const h = Math.max((y1 - y0) * 1.6, 24);
+    zoom = Math.min(MAX_ZOOM, Math.max(1, Math.min(size / w, size / h)));
+    centerX = (x0 + x1) / 2;
+    centerY = (y0 + y1) / 2;
+    onZoom?.(zoom);
+  };
+
+  /** Bounding box of the live cells, or null for an empty grid. */
+  const boundsOf = (data: Uint32Array): [number, number, number, number] | null => {
+    let x0 = size;
+    let y0 = size;
+    let x1 = -1;
+    let y1 = -1;
+    for (let y = 0; y < size; y++) {
+      const row = y * size;
+      for (let x = 0; x < size; x++) {
+        if (data[row + x] === 0) continue;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        y1 = y;
+      }
+    }
+    return x1 < 0 ? null : [x0, y0, x1 + 1, y1 + 1];
   };
 
   /** Canvas CSS pixels -> device pixels. */
@@ -217,17 +250,24 @@ export function createCellularAutomata(
       case "pattern": {
         const name = initial.name;
         const pattern = patterns.find((p) => p.name === name);
-        upload(pattern ? rasterizePattern(pattern, size, size) : new Uint32Array(size * size));
+        const data = pattern ? rasterizePattern(pattern, size, size) : new Uint32Array(size * size);
+        upload(data);
+        // Open readable: a library pattern fills the view instead of being a speck in a big grid.
+        const b = boundsOf(data);
+        if (b) fitBounds(...b);
+        else resetView();
         break;
       }
       case "random": {
         const data = new Uint32Array(size * size);
         for (let i = 0; i < data.length; i++) data[i] = Math.random() > 0.8 ? 1 : 0;
         upload(data);
+        resetView();
         break;
       }
       case "clear":
         upload(new Uint32Array(size * size));
+        resetView();
         break;
     }
   };
@@ -330,6 +370,13 @@ export function createCellularAutomata(
       if (!patterns.some((p) => p.name === name)) return;
       initial = { kind: "pattern", name };
       applyInitial();
+    },
+    fitGrid: resetView,
+    async fitPattern() {
+      const data = new Uint32Array(await cells.read.read());
+      const b = boundsOf(data);
+      if (b) fitBounds(...b);
+      else resetView();
     },
     panBy(dxCss, dyCss) {
       const [dx, dy] = toDevice(dxCss, dyCss);

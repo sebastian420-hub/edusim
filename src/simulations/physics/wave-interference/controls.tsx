@@ -5,6 +5,7 @@ import { ParameterSlider } from "@/components/ParameterSlider";
 import { SimLayout } from "@/components/SimLayout";
 import { useGpuSim } from "@/lib/gpu/useGpuSim";
 import { usePersistedParams } from "@/lib/usePersistedParams";
+import { usePlaying } from "@/lib/usePlaying";
 import { boolField, enumField, numberField } from "@/lib/urlState";
 import type { Schema } from "@/lib/urlState";
 import { WAVE_CHALLENGES } from "./challenges";
@@ -53,6 +54,7 @@ const pillClass = (active: boolean) =>
 
 export default function WaveInterferenceControls() {
   const { canvasRef, status, sim, quality } = useGpuSim(createWaveSim);
+  const [playing, setPlaying] = usePlaying(sim, true);
   const [params, setParams, resetParams] = usePersistedParams(SIM_ID, SCHEMA, DEFAULTS);
   const [tool, setTool] = useState<MeasureTool>("none");
   const readouts = useMemo(() => detectorReadouts(params), [params]);
@@ -158,8 +160,16 @@ export default function WaveInterferenceControls() {
     </>
   );
 
+  const MODE_NAMES: Record<WaveMode, string> = { point: "One point source", "two-points": "Two point sources", "single-slit": "Single slit", "double-slit": "Double slit" };
+  const summary =
+    `${MODE_NAMES[params.mode]}, ${params.view === "water" ? "3D water" : params.view} view.` +
+    (readouts.measuredSpacing !== undefined
+      ? ` Bright fringes on the detector screen are ${readouts.measuredSpacing.toFixed(2)} units apart${readouts.theorySpacing !== undefined ? ` (theory λL/d: ${readouts.theorySpacing.toFixed(2)})` : ""}.`
+      : "");
+
   return (
     <SimLayout
+      summary={summary}
       title="Wave Interference & Diffraction"
       subject="physics"
       difficulty="easy"
@@ -178,7 +188,8 @@ export default function WaveInterferenceControls() {
       }
       canvasRef={canvasRef}
       onResetDefaults={resetParams}
-      onPlayPause={(playing) => (playing ? sim?.play() : sim?.pause())}
+      playing={playing}
+      onPlayPause={setPlaying}
       onReset={() => sim?.reset()}
     >
       <canvas ref={canvasRef} className="block h-full w-full" />

@@ -73,7 +73,8 @@ const POSTERS = [
       await page.getByRole("button", { name: "Random" }).click(); // a dense, evolving soup fills the frame
       await page.getByRole("slider", { name: "Speed" }).fill("60");
       await page.getByRole("button", { name: "Play" }).click();
-      await page.waitForFunction(() => Number(document.body.innerText.match(/Generation\s*\n?\s*(\d+)/)?.[1] ?? 0) >= 14, null, { timeout: 60_000 });
+      // The sidebar counter (not the page text: the screen-reader summary also mentions the generation, throttled).
+      await page.waitForFunction(() => Number([...document.querySelectorAll("span")].find((s) => s.textContent === "Generation")?.nextElementSibling?.textContent ?? 0) >= 14, null, { timeout: 60_000 });
       await page.getByRole("button", { name: "Pause" }).click();
       const box = await page.locator("canvas").boundingBox();
       await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);

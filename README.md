@@ -36,7 +36,7 @@ explanatory message instead of a blank canvas.
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
 | `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
-| `pnpm e2e` | Full browser suite (56 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
+| `pnpm e2e` | Full browser suite (62 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
 | `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
 | `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
@@ -81,6 +81,9 @@ src/
   localStorage). Schemas in `lib/urlState.ts` clamp/validate everything, so a bad link can't break a sim.
 - **`SimLayout`:** copy link, save image, reset to defaults, keyboard shortcuts (Space, `.`, `R`, `?`) and an
   optional Challenges tab. On phones the sidebar is a bottom drawer (peek / half / full) with Play always in reach.
+- **Accessibility:** pass `summary` to `SimLayout` (one sentence on what the canvas shows, announced through a
+  throttled polite live region), use `usePlaying(sim, autoplay)` so a sim starts paused under reduced motion,
+  and keep every simulation page clean in the axe audit (`pnpm e2e` checks desktop and phone).
 - **Touch:** `lib/gestures.ts` turns two-finger input into pan and pinch-zoom steps; canvases with a view (Cellular
   Automata, N-body) apply them, and keep one finger for their own tool.
 - **Challenges:** data in `lib/challenges.ts` format (predict → set up → goal check → explanation), rendered by
