@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { compute, effect, pingPongStorage, storage, target } from "vgpu/node";
+import { compute, effect, frame, pingPongStorage, storage, target } from "vgpu/node";
 import { tryInitGpu } from "@/test/gpu";
 import type { NodeGpu } from "@/test/gpu";
 import computeShader from "./cs/cellular-automata/compute.wgsl";
@@ -11,6 +11,11 @@ import neuronShader from "./biology/hodgkin-huxley/neuron.wgsl";
 import waveShader from "./physics/wave-interference/wave.wgsl";
 import { DEFAULTS as WAVE_DEFAULTS, phasor as wavePhasor } from "./physics/wave-interference/wave";
 import type { WaveMode } from "./physics/wave-interference/wave";
+import { createEngine as createNBodyEngine } from "./physics/n-body/engine";
+import { createRenderer as createNBodyRenderer } from "./physics/n-body/renderer";
+import { computeAccelerations, G_ORBIT, rng as nbodyRng, stateFromBodies, step } from "./physics/n-body/nbody";
+import { orbitPreset as nbodyPreset } from "./physics/n-body/presets";
+import { TRAIL_LEN as NBODY_TRAIL_LEN } from "./physics/n-body/sim-constants";
 import { DEFAULT_PARAMS, DT_MS, HISTORY_SAMPLES, REST_STATE, SAMPLE_EVERY, simulate } from "./biology/hodgkin-huxley/hh";
 
 let gpu: NodeGpu | null = null;
@@ -256,5 +261,119 @@ describe("Cellular automata count/fingerprint shader vs CPU twin", () => {
       expect(ring[g * 2], `count after generation ${g}`).toBe(countAlive(grid));
       expect(ring[g * 2 + 1], `fingerprint after generation ${g}`).toBe(stateHash(grid));
     }
+  });
+});
+
+describe("N-body engine (gravity + integrate shaders) vs CPU twin", () => {
+  const random = nbodyRng(99);
+  const randomState = (n: number) => {
+    const s = { n, pos: new Float64Array(n * 4), vel: new Float64Array(n * 4), acc: new Float64Array(n * 4) };
+    for (let i = 0; i < n; i++) {
+      s.pos.set([random() * 4 - 2, random() * 4 - 2, random() * 0.2 - 0.1, 0.1 + random()], i * 4);
+      s.vel.set([random() - 0.5, random() - 0.5, 0, 0], i * 4);
+    }
+    return s;
+  };
+
+  needsGpu("forces and potentials match for body counts around the 64-wide tiles (1, 2, 63, 64, 65, 1000)", async (gpu) => {
+    const engine = createNBodyEngine(gpu, 1000, 0);
+    for (const n of [1, 2, 63, 64, 65, 1000]) {
+      const s = randomState(n);
+      computeAccelerations(s, 1, 0.01);
+      engine.upload(new Float32Array(s.pos), new Float32Array(s.vel), n, 1, 0.01);
+      const snap = await engine.read();
+      const scale = Math.max(1e-6, ...s.acc.map(Math.abs));
+      for (let k = 0; k < n * 4; k++) expect(Math.abs(snap.acc[k] - s.acc[k]) / scale, `n=${n}, component ${k}`).toBeLessThan(2e-5);
+    }
+    engine.dispose();
+  });
+
+  needsGpu("one year of Earth's orbit (1000 leapfrog steps) lands where the twin does, in f32", async (gpu) => {
+    const bodies = nbodyPreset("sun-earth").bodies;
+    const twin = stateFromBodies(bodies);
+    computeAccelerations(twin, G_ORBIT, 1e-8);
+    const engine = createNBodyEngine(gpu, 8, 2);
+    engine.upload(new Float32Array(twin.pos), new Float32Array(twin.vel), twin.n, G_ORBIT, 1e-8);
+    for (let k = 0; k < 1000; k++) step(twin, 1e-3, G_ORBIT, 1e-8);
+    engine.step(1e-3, 1000);
+    const snap = await engine.read();
+    expect(snap.time).toBeCloseTo(1, 9);
+    expect(Math.hypot(snap.pos[4] - twin.pos[4], snap.pos[5] - twin.pos[5])).toBeLessThan(1e-3);
+    expect(Math.hypot(snap.pos[4], snap.pos[5])).toBeCloseTo(1, 3);
+    engine.dispose();
+  });
+
+  needsGpu("explicit Euler on the GPU drifts outwards exactly like the twin", async (gpu) => {
+    const bodies = nbodyPreset("sun-earth").bodies;
+    const twin = stateFromBodies(bodies);
+    computeAccelerations(twin, G_ORBIT, 1e-8);
+    const engine = createNBodyEngine(gpu, 8, 0);
+    engine.upload(new Float32Array(twin.pos), new Float32Array(twin.vel), twin.n, G_ORBIT, 1e-8);
+    for (let k = 0; k < 500; k++) step(twin, 2e-3, G_ORBIT, 1e-8, "euler");
+    engine.step(2e-3, 500, "euler");
+    const snap = await engine.read();
+    expect(Math.hypot(snap.pos[4] - twin.pos[4], snap.pos[5] - twin.pos[5])).toBeLessThan(1e-3);
+    expect(Math.hypot(snap.pos[4], snap.pos[5])).toBeGreaterThan(1.02);
+    engine.dispose();
+  });
+
+  needsGpu("trail recording writes the newest position into the ring slot", async (gpu) => {
+    const engine = createNBodyEngine(gpu, 8, 2);
+    const s = randomState(3);
+    engine.upload(new Float32Array(s.pos), new Float32Array(s.vel), 3, 1, 0.01);
+    engine.recordTrail();
+    engine.step(0.01, 3);
+    engine.recordTrail();
+    const trail = new Float32Array(await engine.buffers.trail.read());
+    const snap = await engine.read();
+    expect(engine.trailHead).toBe(2);
+    expect(engine.trailFilled).toBe(2);
+    // Body 1, slot 1 = its position now; body 2 has no trail (only 2 trail bodies).
+    expect(trail[(1 * NBODY_TRAIL_LEN + 1) * 4]).toBeCloseTo(snap.pos[4], 6);
+    expect(trail[(1 * NBODY_TRAIL_LEN + 1) * 4 + 3]).toBe(1);
+    expect(trail[(1 * NBODY_TRAIL_LEN + 2) * 4 + 3]).toBe(0);
+    engine.dispose();
+  });
+
+  needsGpu("instanced draw: each body appears as a disc at its position (world y up), trails as fading lines", async (gpu) => {
+    const t = target(gpu, { size: [64, 64] });
+    const engine = createNBodyEngine(gpu, 4, 3);
+    // Three bodies at rest far apart (tiny G: they do not move noticeably).
+    engine.upload(new Float32Array([0, 0, 0, 1, 10, 10, 0, 1, -10, 10, 0, 1]), new Float32Array(12), 3, 1e-9, 1e-6);
+    const renderer = createNBodyRenderer(gpu, engine);
+    renderer.setLooks(new Float32Array([1, 0, 0, 3, 0, 1, 0, 3, 0, 0, 1, 3]));
+    renderer.setGlow(0);
+    frame(gpu, (f) => f.pass({ target: t, clear: [0, 0, 0, 1] }, renderer.prepare(t, { center: [0, 0], pxPerUnit: 1 })));
+    const px = await t.color.read({ mipLevel: 0, region: "all" });
+    const at = (x: number, y: number) => [...px.slice((y * 64 + x) * 4, (y * 64 + x) * 4 + 3)];
+    expect(at(32, 32)[0]).toBeGreaterThan(200); // red body at the centre
+    expect(at(42, 21)[1]).toBeGreaterThan(200); // green: 10 right, 10 up
+    expect(at(21, 21)[2]).toBeGreaterThan(200); // blue: 10 left, 10 up
+    expect(at(32, 50)).toEqual([0, 0, 0]); // empty space stays black
+    expect(at(5, 5)).toEqual([0, 0, 0]);
+
+    // A trail: one body moving right, recorded every step, drawn as a line that fades towards the oldest end.
+    const t2 = target(gpu, { size: [64, 64] });
+    const e2 = createNBodyEngine(gpu, 2, 1);
+    e2.upload(new Float32Array([-20, 0, 0, 1]), new Float32Array([1, 0, 0, 0]), 1, 1e-9, 1e-6);
+    for (let k = 0; k < 10; k++) {
+      e2.recordTrail();
+      e2.step(2, 1);
+    }
+    const r2 = createNBodyRenderer(gpu, e2);
+    r2.setLooks(new Float32Array([0.1, 1, 0.1, 0.01])); // a green body: its trail must be green
+    frame(gpu, (f) => f.pass({ target: t2, clear: [0, 0, 0, 1] }, r2.prepare(t2, { center: [0, 0], pxPerUnit: 1 })));
+    const p2 = await t2.color.read({ mipLevel: 0, region: "all" });
+    const row = (x: number) => Math.max(p2[(31 * 64 + x) * 4 + 1], p2[(32 * 64 + x) * 4 + 1]);
+    // Recorded at x = −20 … −2, i.e. pixels 12 … 30: brightest at the newest end.
+    expect(row(28)).toBeGreaterThan(row(14));
+    expect(row(14)).toBeGreaterThan(0);
+    expect(row(8)).toBe(0); // nothing before the oldest point
+    expect(p2[(31 * 64 + 28) * 4 + 1] + p2[(32 * 64 + 28) * 4 + 1]).toBeGreaterThan(3 * (p2[(31 * 64 + 28) * 4] + p2[(32 * 64 + 28) * 4]));
+    expect(row(40)).toBe(0); // nothing beyond the body
+    renderer.dispose();
+    r2.dispose();
+    engine.dispose();
+    e2.dispose();
   });
 });

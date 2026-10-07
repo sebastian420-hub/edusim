@@ -14,14 +14,14 @@ export default function Home() {
         <Masthead live={live.length} planned={planned} />
 
         <main>
-          <section className="grid gap-6 py-7 lg:grid-cols-[minmax(0,4fr)_minmax(0,8fr)] lg:gap-12 lg:pt-11 lg:pb-10">
+          <section className="grid gap-6 py-7 lg:grid-cols-[minmax(0,3.3fr)_minmax(0,8.7fr)] lg:gap-10 lg:pt-11 lg:pb-10">
             <div className="rise" style={{ "--i": 0 } as React.CSSProperties}>
               <p className="mb-5 font-mono text-label tracking-[0.14em] text-live uppercase">Interactive · GPU-computed</p>
               <h1 className="text-display font-medium text-balance">
                 Science you can <span className="text-mut">reach into.</span>
               </h1>
               <p className="mt-5 max-w-[34ch] text-[15px] leading-normal text-mut">
-                Live models of waves, neurons and cellular life, computed on your graphics card. Change a parameter. Watch the physics answer.
+                Live models of waves, orbits, neurons and cellular life, computed on your graphics card. Change a parameter. Watch the physics answer.
               </p>
               <dl className="mt-7 hidden border-t border-hair lg:block">
                 {[
@@ -37,7 +37,10 @@ export default function Home() {
               </dl>
             </div>
 
-            <ul className="-mx-5 flex scroll-pl-5 snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:none] sm:-mx-10 sm:scroll-pl-10 sm:px-10 lg:mx-0 lg:grid lg:grid-cols-3 lg:gap-4 lg:overflow-visible lg:px-0 lg:pb-0">
+            <ul
+              className="-mx-5 flex scroll-pl-5 snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:none] sm:-mx-10 sm:scroll-pl-10 sm:px-10 lg:mx-0 lg:grid lg:grid-cols-(--plates) lg:gap-3.5 lg:overflow-visible lg:px-0 lg:pb-0"
+              style={{ "--plates": `repeat(${live.length}, minmax(0, 1fr))` } as React.CSSProperties}
+            >
               {live.map((sim, i) => (
                 <li key={sim.id} className="w-[min(70vw,300px)] shrink-0 snap-start lg:w-auto">
                   <Plate sim={sim} number={i + 1} index={i} />

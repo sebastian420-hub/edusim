@@ -8,6 +8,8 @@ import { createCellularAutomata } from "./cs/cellular-automata/sim";
 import type { CellularAutomataHandle } from "./cs/cellular-automata/sim";
 import { createHodgkinHuxley } from "./biology/hodgkin-huxley/sim";
 import type { HHHandle } from "./biology/hodgkin-huxley/sim";
+import { createNBody } from "./physics/n-body/sim";
+import type { NBodyHandle } from "./physics/n-body/sim";
 import { createWaveSim } from "./physics/wave-interference/sim";
 import type { WaveHandle } from "./physics/wave-interference/sim";
 
@@ -39,6 +41,16 @@ export const PREVIEWS: Record<string, Preview> = {
       };
       frame = requestAnimationFrame(tick);
       return () => cancelAnimationFrame(frame);
+    },
+  }),
+
+  "n-body": define<NBodyHandle>({
+    factory: createNBody,
+    setup(handle) {
+      // Two galaxies colliding: the GPU showcase. Small enough for any GPU, at the most dramatic speed.
+      handle.setGalaxy("collision", 2048);
+      handle.setSpeed(3);
+      handle.play();
     },
   }),
 

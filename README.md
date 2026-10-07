@@ -6,6 +6,7 @@ Built with Next.js 16 (App Router, Turbopack), React 19, Tailwind 4 and [vgpu](h
 | Simulation | Subject | GPU technique |
 |---|---|---|
 | Wave Interference & Diffraction | Physics | Fragment shader; Huygens–Fresnel slits as phasor sums |
+| N-Body Orbital Mechanics | Physics | Tiled all-pairs gravity compute shader (up to 16 384 bodies), leapfrog integrator, instanced rendering |
 | Hodgkin–Huxley Neuron | Biology | Compute shader integrates the ODEs; fragment shader plots the traces |
 | Cellular Automata | Computer Science | Ping-pong compute shader over grids up to 2048²; a reduction shader counts and fingerprints every generation; pan/zoom renderer |
 
@@ -35,7 +36,7 @@ explanatory message instead of a blank canvas.
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
 | `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
-| `pnpm e2e` | Full browser suite (45 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
+| `pnpm e2e` | Full browser suite (53 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
 | `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
 | `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
@@ -86,6 +87,12 @@ src/
 - **Measurement:** sims get a TypeScript twin of the shader (`wave.ts`, `hh.ts`, `life.ts`) used for graphs,
   readouts and tests, and a GPU test proving the two agree. `MiniChart` is a small SVG chart for readouts like the
   firing-rate curve and the population graph.
+- **N-body:** `gravity.wgsl` sums softened gravity over all pairs in 64-body tiles of workgroup memory, `integrate.wgsl`
+  does leapfrog (or Euler, for the numerics lesson). `engine.ts` is the GPU physics without drawing, shared by the sim
+  and the GPU tests; `renderer.ts` copies positions into vertex buffers (vertex shaders may not read storage buffers
+  on compatibility-mode devices) and draws instanced discs and fading trails. Energies, orbital elements and measured
+  periods come from small read-backs, sampled every ≤ 16 steps so fast planets are never aliased. The orbit lab's
+  units are AU, years and solar masses (G = 4π²), so Earth's period is exactly 1 year.
 - **Cellular automata measurement:** `count.wgsl` reduces the grid to a live-cell count and an order-independent
   fingerprint every generation (into a 1024-slot ring buffer); `sim.ts` reads it back at most every 100 ms and
   `tracker.ts` classifies the history (extinct / still life / oscillator with period / moving pattern). It only runs
@@ -94,7 +101,7 @@ src/
 
 ## The home page
 
-A compact editorial layout (about one screen on a desktop, 1.35 on a phone): three numbered *plates* for the working
+A compact editorial layout (about one screen on a desktop, 1.35 on a phone): numbered *plates* for the working
 simulations and a typographic index of the planned ones. Design tokens (colours, type scale, motion) live in
 `src/app/globals.css`; components in `src/components/home/`. The plan and measurements are in
 [`docs/HOMEPAGE-PLAN.md`](docs/HOMEPAGE-PLAN.md).
