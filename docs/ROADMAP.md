@@ -121,7 +121,7 @@ Recommended order, each chosen to reuse what exists and to showcase the GPU:
 1. **Double pendulum chaos** (easy): one pendulum plus a GPU ensemble of thousands of slightly
    different starts, showing divergence; a "flip-time fractal" map as a stretch goal.
 2. **Resting membrane potential** (easy): reuses the biology UI and HH concepts (Nernst, Goldman).
-3. **N-body orbital mechanics** (medium): compute shader, a natural next GPU showcase.
+3. **N-body orbital mechanics** (medium): compute shader, a natural next GPU showcase. Next up — plan in [`NBODY-PLAN.md`](NBODY-PLAN.md).
 4. **Axon propagation** (medium): many HH compartments in parallel — the HH shader generalised from
    1 thread to N, which is where the GPU truly pays off for biology.
 
