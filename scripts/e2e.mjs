@@ -154,20 +154,20 @@ async function waitForChange(page, reference, message, timeout = 10_000) {
 const text = async (page, selector) => (await page.locator(selector).first().textContent()) ?? "";
 
 // ───────────────────────────── home ─────────────────────────────
-await test("home: compact editorial layout — plates link to the 4 simulations, planned ones are plain text", async (page) => {
+await test("home: compact editorial layout — plates link to the 5 simulations, planned ones are plain text", async (page) => {
   await page.goto(url("/"));
   assert((await page.title()).includes("EduSim"), `title: ${await page.title()}`);
   assert((await page.locator("h1").count()) === 1, "exactly one h1");
   assert((await text(page, "h1")).includes("reach into"), "headline");
   const links = await page.locator("main a[href^='/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
-  assert(links.length === 4, `expected 4 plate links, got ${links.join(",")}`);
+  assert(links.length === 5, `expected 5 plate links, got ${links.join(",")}`);
   for (const l of await page.locator("main a").all()) assert(((await l.textContent()) ?? "").trim().length > 3, "link without text");
   assert((await page.locator("h2").count()) >= 4, "plate headings + index heading");
   for (const subject of ["Physics", "Chemistry", "Computer Science", "Biology"]) {
     assert(await page.getByRole("heading", { name: subject }).first().isVisible(), `missing index column ${subject}`);
   }
-  assert(await page.getByText("Double Pendulum Chaos").first().isVisible(), "planned item not shown");
-  assert((await page.locator("a:has-text('Double Pendulum')").count()) === 0, "planned simulations must not be links");
+  assert(await page.getByText("Fluid Dynamics").first().isVisible(), "planned item not shown");
+  assert((await page.locator("a:has-text('Fluid Dynamics')").count()) === 0, "planned simulations must not be links");
   await page.getByRole("link", { name: /Hodgkin/ }).click();
   await page.waitForURL(/hodgkin-huxley/);
   await page.getByRole("link", { name: "← All simulations" }).click();
@@ -189,6 +189,22 @@ await test("home: compact — about one screen on desktop, under 1.4 on a phone"
   console.log(`      (desktop ${desktop.toFixed(2)} screens, phone ${phone.toFixed(2)} screens)`);
 });
 
+await test("home: the plates are one row that scrolls sideways, four at a time on desktop", async (page) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(url("/"));
+  const row = page.locator("main ul[aria-label=Simulations]");
+  const box = await row.boundingBox();
+  const plates = await page.locator("main ul[aria-label=Simulations] > li").evaluateAll((lis) => lis.map((li) => li.getBoundingClientRect()).map((r) => ({ left: r.left, right: r.right })));
+  assert(plates.length === 5, `${plates.length} plates`);
+  const inside = plates.filter((r) => r.left >= box.x - 1 && r.right <= box.x + box.width + 1).length;
+  assert(inside === 4, `${inside} plates fully visible (want 4)`);
+  assert(await row.evaluate((ul) => ul.scrollWidth > ul.clientWidth + 50), "the row should scroll");
+  await page.locator("[data-plate=hodgkin-huxley]").scrollIntoViewIfNeeded();
+  await page.waitForTimeout(400);
+  const last = await page.locator("main ul[aria-label=Simulations] > li").last().evaluate((li) => li.getBoundingClientRect().right);
+  assert(last <= box.x + box.width + 1, "the last plate scrolls into view");
+});
+
 await test("home: no horizontal overflow at 320, 390, 768, 1024 and 1440 px", async (page) => {
   for (const width of [320, 390, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 800 });
@@ -206,7 +222,7 @@ await test("home: phone index is collapsed and expands on tap", async (page) => 
   assert((await page.locator("details[open]").count()) === 0, "accordions should start collapsed");
   await page.locator("details summary").first().tap();
   assert((await page.locator("details[open]").count()) === 1, "tap should open one");
-  assert(await page.getByText("Double Pendulum Chaos").last().isVisible(), "item visible after opening");
+  assert(await page.getByText("Fluid Dynamics").last().isVisible(), "item visible after opening");
 }, { context: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
 
 await test("home: does not touch the GPU on load, and stays within size budgets", async (page) => {
@@ -248,7 +264,7 @@ await test("home: automated accessibility audit (axe) finds no violations, deskt
 });
 
 // ───────────────────────────── home: live plates ─────────────────────────────
-const PLATES = ["wave-interference", "n-body", "cellular-automata", "hodgkin-huxley"]; // catalog (= page) order
+const PLATES = ["wave-interference", "n-body", "double-pendulum", "cellular-automata", "hodgkin-huxley"]; // catalog (= page) order
 const liveCanvases = (page) => page.locator("[data-testid=plate-live]");
 const waitLive = (page, id, timeout = 45_000) => page.waitForSelector(`[data-plate="${id}"] [data-testid=plate-live][data-state=ready]`, { timeout });
 /** Fraction of lit pixels in a plate's live canvas (a blank canvas would be ~0). */
@@ -265,7 +281,7 @@ const litFraction = (page, id) =>
     return lit / (bitmap.width * bitmap.height);
   }, id);
 
-await test("home plates: hover runs the real simulation (all four), one at a time, and leaving restores the poster", async (page) => {
+await test("home plates: hover runs the real simulation (all five), one at a time, and leaving restores the poster", async (page) => {
   await page.goto(url("/"));
   assert((await liveCanvases(page).count()) === 0, "no live canvas before any intent");
   for (const id of PLATES) {
@@ -1120,6 +1136,146 @@ await test("n-body: challenge flow (circular orbit) with persistence", async (pa
   assert((await page.locator("text=/1 of 4 done/").count()) === 1, "completion not persisted");
 });
 
+// ───────────────────────────── double pendulum ─────────────────────────────
+const dpText = async (page, id) => (await text(page, `[data-testid=${id}]`)).trim();
+const dpNumber = async (page, id) => parseFloat((await dpText(page, id)).replace("−", "-"));
+const dpWait = (page, id, test, timeout = 60_000) =>
+  page.waitForFunction(([id, src]) => new Function("t", `return ${src}`)(document.querySelector(`[data-testid=${id}]`)?.textContent ?? ""), [id, test], { timeout });
+const param = (page, key) => new URL(page.url()).searchParams.get(key);
+
+await test("double-pendulum: a high release flips, RK4 keeps the energy, the phase portrait draws", async (page) => {
+  await open(page, "/physics/double-pendulum?speed=2");
+  await dpWait(page, "dp-time", "parseFloat(t) > 8");
+  assert(Math.abs(await dpNumber(page, "dp-drift")) < 1e-4, `energy drift ${await dpText(page, "dp-drift")} (percent)`);
+  assert(parseInt(await dpText(page, "dp-flips")) > 0, `flips: ${await dpText(page, "dp-flips")}`);
+  assert((await page.locator("figure svg[aria-label^='Phase portrait'] path").count()) === 1, "phase portrait");
+  await page.getByRole("radio", { name: "Euler" }).check();
+  await dpWait(page, "dp-time", "parseFloat(t) > 4");
+  assert(Math.abs(await dpNumber(page, "dp-drift")) > 0.1, `Euler should visibly change the energy: ${await dpText(page, "dp-drift")}`);
+  await shot(page, "pendulum");
+});
+
+await test("double-pendulum: the in-phase normal mode's period is measured as 2π/ω = 2.62 s", async (page) => {
+  await open(page, "/physics/double-pendulum?a1=10&a2=14.1&speed=2");
+  await dpWait(page, "dp-time", "parseFloat(t) > 9");
+  const T = await dpNumber(page, "dp-period");
+  assert(Math.abs(T / 2.6206 - 1) < 0.01, `measured period ${T} s`);
+  assert(parseInt(await dpText(page, "dp-flips")) === 0, "a small swing never flips");
+});
+
+await test("double-pendulum: dragging a bob sets the release angles (and the link), letting go releases it", async (page) => {
+  await open(page, "/physics/double-pendulum?a1=0&a2=0");
+  const box = await page.locator("canvas").first().boundingBox();
+  const k = (Math.min(box.width, box.height) / 2 / 2) * 0.88; // CSS px per metre: the view frames both arms
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  // Lower bob hangs at (0, −2): drag it out to (1, −1), a lower arm at 90°.
+  await page.mouse.move(cx, cy + 2 * k);
+  await page.mouse.down();
+  await page.mouse.move(cx + k, cy + k, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("a2") !== "0");
+  assert(Math.abs(Number(param(page, "a2")) - 90) < 2, `lower arm ${param(page, "a2")}°`);
+  assert(param(page, "a1") === "0", `the upper arm should stay at 0°: ${page.url()}`);
+  assert((await page.getByRole("button", { name: /^(Play|Pause)$/ }).textContent()) === "Pause", "letting go should release the pendulum");
+  // Then the upper bob, from (0, −1) to (−1, 0): −90°.
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await page.getByRole("button", { name: "Reset", exact: true }).click();
+  await page.waitForTimeout(300);
+  await page.mouse.move(cx, cy + k);
+  await page.mouse.down();
+  await page.mouse.move(cx - k, cy, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("a1") !== "0");
+  assert(Math.abs(Number(param(page, "a1")) + 90) < 2, `upper arm ${param(page, "a1")}°`);
+});
+
+await test("double-pendulum: butterfly — from 120° a 10⁻⁹ gap parts in about 15 s; from 60° it stays tiny", async (page) => {
+  await open(page, "/physics/double-pendulum?view=butterfly&a1=120&a2=120&speed=2");
+  await dpWait(page, "dp-visible", "t.startsWith('at')", 60_000);
+  const at = parseFloat((await dpText(page, "dp-visible")).replace("at ", ""));
+  assert(at > 12 && at < 18, `parted at ${at} s`);
+  const lambda = await dpNumber(page, "dp-lambda");
+  assert(lambda > 1.2 && lambda < 2, `λ = ${lambda}`);
+  assert((await page.locator("figure svg[aria-label^='Gap between']").count()) === 1, "spread graph");
+  await dpWait(page, "dp-precision", "/parted at/.test(t)", 30_000); // the 32-bit crowd parts from the 64-bit pair too
+  await shot(page, "pendulum-butterfly");
+  await slider(page, "Upper arm θ₁").fill("60");
+  await slider(page, "Lower arm θ₂").fill("60");
+  await dpWait(page, "dp-time", "parseFloat(t) > 15");
+  assert((await dpText(page, "dp-visible")) === "not yet", "a calm start should not part");
+  assert((await dpNumber(page, "dp-spread")) < 1e-6, `calm gap ${await dpText(page, "dp-spread")}`);
+  assert((await dpText(page, "dp-lambda")) === "—", "no exponential growth to measure");
+});
+
+await test("double-pendulum: fractal — develops on the GPU, hover reads flip times, zoom and click open a start", async (page) => {
+  await open(page, "/physics/double-pendulum?view=fractal");
+  await dpWait(page, "dp-map-time", "parseFloat(t) > 3");
+  const box = await page.locator("canvas").first().boundingBox();
+  const side = Math.min(box.width, box.height);
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  // The centre (hanging straight down) is deep inside the energy boundary: it never flips.
+  await page.mouse.move(cx + 2, cy + 2);
+  await dpWait(page, "dp-hover-flip", "t === 'none yet'", 10_000);
+  // Near a corner (both arms almost upside down: −173°, 173°) it flips within a couple of seconds.
+  await page.mouse.move(cx - side * 0.48, cy - side * 0.48);
+  await dpWait(page, "dp-hover-flip", "/^\\d/.test(t) && parseFloat(t) < 3", 10_000);
+  await shot(page, "pendulum-fractal");
+  // Scroll to zoom: the window is written to the link once the wheel stops.
+  for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -100);
+  await page.waitForFunction(() => new URL(location.href).searchParams.has("fspan"), null, { timeout: 5_000 });
+  assert(Number(param(page, "fspan")) < (2 * Math.PI) / 1.9, `zoomed span ${param(page, "fspan")}`);
+  await page.getByRole("button", { name: "Full map" }).click();
+  await page.waitForFunction(() => !new URL(location.href).searchParams.has("fspan"));
+  // A click on a pixel opens that start as a pendulum: three quarters across, one quarter down = (90°, 90°).
+  await page.mouse.click(cx + side * 0.25, cy - side * 0.25);
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("view") === null);
+  assert(Math.abs(Number(param(page, "a1")) - 90) < 2 && Math.abs(Number(param(page, "a2")) - 90) < 2, `opened ${param(page, "a1")}°, ${param(page, "a2")}°`);
+  assert((await page.getByRole("button", { name: "Pendulum", exact: true }).getAttribute("aria-pressed")) === "true", "pendulum view");
+  await assertNoGpuProblem(page);
+});
+
+await test("double-pendulum: URL state, hostile links, copy link, defaults", async (page) => {
+  await open(page, "/physics/double-pendulum?view=butterfly&a1=33&a2=-45&count=1000&nudge=-6&integrator=euler&trail=0&speed=0.5");
+  assert((await slider(page, "Upper arm θ₁").inputValue()) === "33", "θ₁ from the link");
+  assert((await slider(page, "Lower arm θ₂").inputValue()) === "-45", "θ₂ from the link");
+  assert((await page.locator("select").first().inputValue()) === "1000", "crowd size from the link");
+  assert(await page.getByRole("radio", { name: "Euler" }).isChecked(), "integrator from the link");
+  assert(!(await page.getByLabel("Trail of the lower bob").isChecked()), "trail from the link");
+  await page.getByRole("button", { name: "Copy link" }).click();
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  assert(clip === page.url() && clip.includes("count=1000"), `clipboard: ${clip}`);
+  await page.getByRole("button", { name: "Defaults" }).click();
+  assert(!page.url().includes("?"), `URL not cleared: ${page.url()}`);
+  await page.goto(url("/physics/double-pendulum?view=chaos&a1=1e9&res=4096&fspan=-1&count=7&g=abc"));
+  await page.locator("canvas").first().waitFor();
+  await page.waitForSelector("[data-testid=gpu-status][data-state=loading]", { state: "detached", timeout: 30_000 });
+  assert((await slider(page, "Upper arm θ₁").inputValue()) === "180", "θ₁ clamps to 180°");
+  assert((await page.getByRole("button", { name: "Pendulum", exact: true }).getAttribute("aria-pressed")) === "true", "an unknown view falls back to the pendulum");
+  await assertNoGpuProblem(page);
+});
+
+await test("double-pendulum: challenge flow (can it flip?) with persistence", async (page) => {
+  await open(page, "/physics/double-pendulum");
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /Can it flip/ }).click();
+  await page.getByLabel("never").check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("view") === "fractal");
+  assert(!(await text(page, "[role=status]:has-text('Goal')")).includes("✓"), "goal met too early");
+  // The hint's start, just outside the curve, released in the Pendulum view: it flips after about 4.6 s.
+  await page.getByRole("button", { name: "Pendulum", exact: true }).click();
+  await slider(page, "Upper arm θ₁").fill("30");
+  await slider(page, "Lower arm θ₂").fill("140");
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 90_000 });
+  assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
+  await page.reload();
+  await page.locator("canvas").first().waitFor();
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  assert((await page.locator("text=/1 of 4 done/").count()) === 1, "completion not persisted");
+});
+
 // ───────────────────────────── resilience ─────────────────────────────
 await test("navigation churn: open/close each simulation 3 times without errors", async (page) => {
   for (let i = 0; i < 3; i++) {
@@ -1225,6 +1381,19 @@ await test("phone: pinch-zoom and two-finger pan (cellular automata, with the Dr
   await waitPopulation(page, 1);
 }, { context: PHONE });
 
+await test("phone: pinch-zoom on the double pendulum's fractal map", async (page) => {
+  await open(page, "/physics/double-pendulum?view=fractal");
+  const box = await page.locator("canvas").first().boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await pinch(page, [[cx - 40, cy], [cx + 40, cy]], [[cx - 80, cy], [cx + 80, cy]]);
+  await page.waitForFunction(() => new URL(location.href).searchParams.has("fspan"), null, { timeout: 5_000 });
+  const span = Number(param(page, "fspan"));
+  assert(Math.abs(span / Math.PI - 1) < 0.05, `pinching fingers apart 2× should halve the window (2π → π): ${span}`);
+  assert(new URL(page.url()).searchParams.get("view") === "fractal", "a pinch must not open a pendulum");
+  await assertNoGpuProblem(page);
+}, { context: PHONE });
+
 await test("phone: pinching over a planet zooms instead of dragging it (n-body)", async (page) => {
   await open(page, "/physics/n-body");
   const box = await page.locator("canvas").first().boundingBox();
@@ -1237,7 +1406,7 @@ await test("phone: pinching over a planet zooms instead of dragging it (n-body)"
 }, { context: PHONE });
 
 // ───────────────────────────── accessibility & polish (phase B) ─────────────────────────────
-const SIM_ROUTES = ["/physics/wave-interference", "/physics/n-body", "/cs/cellular-automata", "/biology/hodgkin-huxley"];
+const SIM_ROUTES = ["/physics/wave-interference", "/physics/n-body", "/physics/double-pendulum", "/cs/cellular-automata", "/biology/hodgkin-huxley"];
 
 await test("a11y: every simulation page passes the axe audit, desktop and phone", async (page) => {
   const problems = [];
@@ -1274,6 +1443,7 @@ await test("a11y: each simulation describes its canvas for screen readers (polit
   const expected = {
     "/physics/wave-interference": /Double slit, amplitude view\. Bright fringes .* units apart/,
     "/physics/n-body": /Year \d+\.\d\. Earth: /,
+    "/physics/double-pendulum": /Time \d+\.\d s, angles .* flips, energy changed by/,
     "/cs/cellular-automata": /Generation \d+: 36 live cells\./,
     "/biology/hodgkin-huxley": /fires steadily at \d+ spikes per second/,
   };

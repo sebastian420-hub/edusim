@@ -21,7 +21,7 @@ export default function Home() {
                 Science you can <span className="text-mut">reach into.</span>
               </h1>
               <p className="mt-5 max-w-[34ch] text-[15px] leading-normal text-mut">
-                Live models of waves, orbits, neurons and cellular life, computed on your graphics card. Change a parameter. Watch the physics answer.
+                Live models of waves, orbits, chaos, neurons and cellular life, computed on your graphics card. Change a parameter. Watch the physics answer.
               </p>
               <dl className="mt-7 hidden border-t border-hair lg:block">
                 {[
@@ -37,12 +37,13 @@ export default function Home() {
               </dl>
             </div>
 
+            {/* One row of plates that scrolls sideways with snap: a swipe on phones, four at a time on desktop. */}
             <ul
-              className="-mx-5 flex scroll-pl-5 snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:none] sm:-mx-10 sm:scroll-pl-10 sm:px-10 lg:mx-0 lg:grid lg:grid-cols-(--plates) lg:gap-3.5 lg:overflow-visible lg:px-0 lg:pb-0"
-              style={{ "--plates": `repeat(${live.length}, minmax(0, 1fr))` } as React.CSSProperties}
+              aria-label="Simulations"
+              className="-mx-5 flex scroll-pl-5 snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:none] sm:-mx-10 sm:scroll-pl-10 sm:px-10 lg:mx-0 lg:scroll-pl-0 lg:gap-3.5 lg:px-0 lg:pb-3 lg:[scrollbar-color:rgb(148_163_184/0.35)_transparent] lg:[scrollbar-width:thin]"
             >
               {live.map((sim, i) => (
-                <li key={sim.id} className="w-[min(70vw,300px)] shrink-0 snap-start lg:w-auto">
+                <li key={sim.id} className="flex w-[min(70vw,300px)] shrink-0 snap-start *:flex-1 lg:w-[calc((100%-3*0.875rem)/4)]">
                   <Plate sim={sim} number={i + 1} index={i} />
                 </li>
               ))}
