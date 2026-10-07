@@ -4,6 +4,7 @@ import type { PointerEvent, WheelEvent } from "react";
 import { ChallengesPanel } from "@/components/ChallengesPanel";
 import { MiniChart } from "@/components/MiniChart";
 import { ParameterSlider } from "@/components/ParameterSlider";
+import { createPinchTracker } from "@/lib/gestures";
 import { SimLayout } from "@/components/SimLayout";
 import { useGpuSim } from "@/lib/gpu/useGpuSim";
 import { usePersistedParams } from "@/lib/usePersistedParams";
@@ -61,6 +62,8 @@ export default function CellularAutomataControls() {
       createCellularAutomata(ctx, { onGeneration: setGeneration, onZoom: setZoom, onStats: setStats }),
   );
   const { canvasRef, status, sim, quality } = useGpuSim<CellularAutomataHandle>(factory);
+  // Two fingers pan and pinch-zoom whatever the tool; one finger uses the selected tool.
+  const [pinch] = useState(createPinchTracker);
 
   const [settings, setSettings] = usePersistedParams(SIM_ID, CA_SCHEMA, CA_DEFAULTS);
   const [tool, setTool] = useState<Tool>("pan");
@@ -101,33 +104,57 @@ export default function CellularAutomataControls() {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  // A touch that may become a pinch: drawing waits for the first movement (or a tap) so a second finger can still cancel it.
+  const pendingTouch = useRef<{ x: number; y: number } | null>(null);
+
   const onPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
     if (!sim) return;
+    const p = local(e);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pinch.down(e.pointerId, p.x, p.y);
+    if (pinch.active) {
+      // A second finger: stop drawing, this is a pinch.
+      if (dragging.current && !pendingTouch.current) sim.endStroke();
+      pendingTouch.current = null;
+      dragging.current = false;
+      return;
+    }
     dragging.current = true;
     lastPointer.current = { x: e.clientX, y: e.clientY };
-    e.currentTarget.setPointerCapture(e.pointerId);
-    if (tool !== "pan") {
-      const p = local(e);
-      sim.paint(p.x, p.y, tool === "draw");
-    }
+    if (tool === "pan") return;
+    if (e.pointerType === "touch") pendingTouch.current = p;
+    else sim.paint(p.x, p.y, tool === "draw");
   };
 
   const onPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
+    const p = local(e);
+    const gesture = pinch.move(e.pointerId, p.x, p.y);
+    if (gesture) {
+      sim?.panBy(gesture.dx, gesture.dy);
+      sim?.zoomAt(gesture.factor, gesture.x, gesture.y);
+      return;
+    }
     if (!sim || !dragging.current) return;
     if (tool === "pan") {
       sim.panBy(e.clientX - lastPointer.current.x, e.clientY - lastPointer.current.y);
       lastPointer.current = { x: e.clientX, y: e.clientY };
-    } else {
-      const p = local(e);
-      sim.paint(p.x, p.y, tool === "draw");
+      return;
     }
+    const start = pendingTouch.current;
+    pendingTouch.current = null;
+    if (start) sim.paint(start.x, start.y, tool === "draw");
+    sim.paint(p.x, p.y, tool === "draw");
   };
 
   const endDrag = (e: PointerEvent<HTMLCanvasElement>) => {
+    pinch.up(e.pointerId);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
     if (!dragging.current) return;
     dragging.current = false;
+    const tap = pendingTouch.current;
+    pendingTouch.current = null;
+    if (tap && e.type === "pointerup") sim?.paint(tap.x, tap.y, tool === "draw"); // a tap draws one cell
     sim?.endStroke();
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
   const onWheel = (e: WheelEvent<HTMLCanvasElement>) => {

@@ -43,13 +43,15 @@ Done: `git push` runs `pnpm verify` (`.githooks/pre-push`, installed by `pnpm in
 static site to `out/` that passes the browser smoke test from a plain file server; `pnpm smoke:local` is the
 one-command browser check; `.claude/hooks/session-start.sh` prepares cloud sessions.
 
-## Phase B — Interaction polish (1–2 days) · partly done (shortcuts)
+## Phase B — Interaction polish (1–2 days) · partly done (shortcuts, adaptive quality, touch)
 
 - **Cellular automata opens readable:** "fit to content" zoom on load/pattern change instead of a
   tiny pattern in a 256² grid; "Fit grid" and "Fit pattern" buttons.
 - ✅ **Keyboard shortcuts** for every sim (in `SimLayout`): Space play/pause, `.` step, `R` reset, `?` help.
-- **Touch:** pinch-zoom and two-finger pan for CA; larger hit targets; sidebar becomes a bottom
-  drawer on phones so the canvas keeps most of the screen.
+- ✅ **Touch:** pinch-zoom and two-finger pan for Cellular Automata and N-body (`lib/gestures.ts`; a touch only
+  starts drawing once it moves, so a second finger can still turn it into a pinch); the sidebar is a bottom drawer
+  on phones (peek / half / full, tap or drag the handle, Play always visible); compact two-row header; larger
+  header targets on touch screens.
 - ✅ **Adaptive quality + frame pacing:** bounded frame queue (Pause stays responsive on slow GPUs) and a
   governor that lowers render resolution (down to 35%) when GPU frames cost too much, restoring it only when the
   predicted cost fits; badge + `localStorage edusim:quality=full` to pin full resolution.

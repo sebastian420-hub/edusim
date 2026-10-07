@@ -972,7 +972,8 @@ await test("cellular-automata: challenge flow (glider gun) — the population cl
   await slider(page, "Speed").fill("60");
   await page.getByRole("button", { name: "Play", exact: true }).click();
   await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 150_000 });
-  assert((await caPopulation(page)) > 100, `population ${await caPopulation(page)}`);
+  // (No re-read of the population here: the gun's count swings by ±15 every 30 generations, so it can dip below 100
+  // again right after the goal — which already checked "> 100" on the measured value.)
   assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
 });
 
@@ -1154,6 +1155,85 @@ await test("phone viewport: no horizontal overflow, controls reachable, tap work
   }
   await shot(page, "phone");
 }, { context: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 } });
+
+const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
+
+await test("phone: sidebar is a bottom drawer — tap or drag the handle, Play always within reach, compact header", async (page) => {
+  for (const route of ["/physics/wave-interference", "/physics/n-body", "/cs/cellular-automata", "/biology/hodgkin-huxley"]) {
+    await open(page, route);
+    const header = (await page.locator("header").boundingBox()).height;
+    assert(header <= 100, `${route}: header is ${header}px tall`);
+    const drawer = () => page.getAttribute("[data-testid=sidebar]", "data-drawer");
+    const canvasH = async () => (await page.locator("canvas").first().boundingBox()).height;
+    assert((await drawer()) === "half", `${route}: starts half open`);
+    const half = await canvasH();
+    await page.getByRole("button", { name: "Expand controls" }).tap();
+    assert((await drawer()) === "full", `${route}: tap should expand`);
+    assert((await canvasH()) < half, `${route}: canvas should shrink when the drawer grows`);
+    await page.getByRole("button", { name: "Collapse controls" }).tap();
+    assert((await drawer()) === "peek", `${route}: tap should collapse`);
+    const peek = await canvasH();
+    assert(peek > 600, `${route}: collapsed drawer leaves the canvas only ${peek}px`);
+    assert(await page.getByRole("button", { name: /^(Play|Pause)$/ }).isVisible(), `${route}: Play must stay visible when collapsed`);
+    assert(!(await page.locator("#sim-sidebar-content").isVisible()), `${route}: content hidden when collapsed`);
+    // Drag the handle up: back to a larger drawer.
+    const handle = await page.getByRole("button", { name: "Show controls" }).boundingBox();
+    const cdp = await page.context().newCDPSession(page);
+    const at = (y) => [{ x: handle.x + handle.width / 2, y, id: 1 }];
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(handle.y + 10) });
+    for (let k = 1; k <= 6; k++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(handle.y + 10 - k * 40) });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await page.waitForTimeout(200);
+    assert((await drawer()) !== "peek", `${route}: dragging the handle up should open the drawer`);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert(overflow <= 1, `${route}: horizontal overflow ${overflow}px`);
+  }
+  await shot(page, "phone-drawer");
+}, { context: PHONE });
+
+/** Two real touch points through the DevTools protocol: start at a/b, then move them to a2/b2. */
+async function pinch(page, [a, b], [a2, b2], steps = 6) {
+  const cdp = await page.context().newCDPSession(page);
+  const pts = (p, q) => [{ x: p[0], y: p[1], id: 1 }, { x: q[0], y: q[1], id: 2 }];
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: pts(a, b) });
+  for (let k = 1; k <= steps; k++) {
+    const f = k / steps;
+    const lerp = (p, q) => [p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f];
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: pts(lerp(a, a2), lerp(b, b2)) });
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.waitForTimeout(250);
+}
+
+await test("phone: pinch-zoom and two-finger pan (cellular automata, with the Draw tool selected)", async (page) => {
+  await open(page, "/cs/cellular-automata?pattern=clear");
+  await page.getByRole("button", { name: "Draw", exact: true }).tap();
+  const box = await page.locator("canvas").first().boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await pinch(page, [[cx - 50, cy], [cx + 50, cy]], [[cx - 100, cy], [cx + 100, cy]]);
+  const zoom = parseFloat((await text(page, "text=/Zoom:/")).match(/Zoom: ([\d.]+)/)[1]);
+  assert(Math.abs(zoom - 2) < 0.05, `pinching fingers apart 2× should zoom 2×, got ${zoom}`);
+  await pinch(page, [[cx - 100, cy], [cx + 100, cy]], [[cx - 40, cy + 30], [cx + 160, cy + 30]]); // pan, same spread
+  const after = parseFloat((await text(page, "text=/Zoom:/")).match(/Zoom: ([\d.]+)/)[1]);
+  assert(Math.abs(after - zoom) < 0.05, `two-finger pan changed the zoom: ${zoom} → ${after}`);
+  // With Draw selected, a pinch must not draw: the grid is still empty.
+  await waitStatus(page, /^Extinct$/);
+  // ...but a one-finger tap does draw a cell.
+  await page.touchscreen.tap(cx, cy);
+  await waitPopulation(page, 1);
+}, { context: PHONE });
+
+await test("phone: pinching over a planet zooms instead of dragging it (n-body)", async (page) => {
+  await open(page, "/physics/n-body");
+  const box = await page.locator("canvas").first().boundingBox();
+  const k = Math.min(box.width, box.height) / 2 / 1.25;
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await pinch(page, [[cx + k, cy], [cx - 60, cy]], [[cx + k + 40, cy], [cx - 100, cy]]); // first finger lands on Earth
+  assert(!page.url().includes("bodies="), `a pinch edited the setup: ${page.url()}`);
+  await assertNoGpuProblem(page);
+}, { context: PHONE });
 
 // ───────────────────────────── summary ─────────────────────────────
 await browser.close();
