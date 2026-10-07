@@ -4,6 +4,7 @@ import type { PointerEvent, WheelEvent } from "react";
 import { ChallengesPanel } from "@/components/ChallengesPanel";
 import { MiniChart } from "@/components/MiniChart";
 import { ParameterSlider } from "@/components/ParameterSlider";
+import { createPinchTracker } from "@/lib/gestures";
 import { SimLayout } from "@/components/SimLayout";
 import { useGpuSim } from "@/lib/gpu/useGpuSim";
 import { usePersistedParams } from "@/lib/usePersistedParams";
@@ -101,6 +102,8 @@ export default function NBodyControls() {
       }),
   );
   const { canvasRef, status, sim, quality } = useGpuSim<NBodyHandle>(factory);
+  // Two fingers pan and pinch-zoom; one finger keeps dragging bodies, arrows or the view.
+  const [pinch] = useState(createPinchTracker);
   const [settings, setSettings] = usePersistedParams(SIM_ID, NBODY_SCHEMA, NBODY_DEFAULTS);
   const [playing, setPlaying] = useState(false);
   const [selected, setSelected] = useState<number | null>(1);
@@ -174,6 +177,14 @@ export default function NBodyControls() {
     if (!sim) return;
     const p = local(e);
     e.currentTarget.setPointerCapture(e.pointerId);
+    pinch.down(e.pointerId, p.x, p.y);
+    if (pinch.active) {
+      // A second finger: this is a pinch, not an edit. Undo any half-done drag.
+      const d = drag.current;
+      if (d && d.kind !== "pan" && d.last !== d.base) sim.setOrbitSystem(d.base);
+      drag.current = null;
+      return;
+    }
     const hit = orbit && overlayState.current ? hitTest(overlayState.current, p.x, p.y) : null;
     if (hit) {
       setSelected(hit.index);
@@ -185,9 +196,15 @@ export default function NBodyControls() {
     }
   };
   const onPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
+    const p = local(e);
+    const gesture = pinch.move(e.pointerId, p.x, p.y);
+    if (gesture) {
+      sim?.panBy(gesture.dx, gesture.dy);
+      sim?.zoomAt(gesture.factor, gesture.x, gesture.y);
+      return;
+    }
     const d = drag.current;
     if (!sim || !d) return;
-    const p = local(e);
     if (d.kind === "pan") {
       sim.panBy(p.x - d.x, p.y - d.y);
       d.x = p.x;
@@ -201,6 +218,7 @@ export default function NBodyControls() {
     sim.setOrbitSystem(d.last);
   };
   const onPointerUp = (e: PointerEvent<HTMLCanvasElement>) => {
+    pinch.up(e.pointerId);
     const d = drag.current;
     drag.current = null;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
