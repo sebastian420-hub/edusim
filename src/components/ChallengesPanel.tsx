@@ -9,6 +9,8 @@ interface Session {
   started: boolean;
   showHint: boolean;
   revealed: boolean;
+  /** The goal was reached at some point this session: it stays reached even if a live readout drifts back. */
+  achieved: boolean;
 }
 
 interface ChallengesPanelProps<P, R> {
@@ -28,13 +30,18 @@ export function ChallengesPanel<P, R>({ simId, challenges, params, readouts, onS
   const [choice, setChoice] = useState<number | null>(null);
 
   const challenge = challenges.find((c) => c.id === session?.id);
-  const goalMet = !!challenge && !!session?.started && challenge.goal.check({ params, readouts });
+  const liveGoal = !!challenge && !!session?.started && challenge.goal.check({ params, readouts });
 
   // Completion is derived from the live goal check, so it is recorded while rendering (React's
   // documented pattern for adjusting state from props) and only the persistence is an effect.
-  if (goalMet && challenge && !completed.includes(challenge.id)) {
+  if (liveGoal && challenge && !completed.includes(challenge.id)) {
     setCompleted([...completed, challenge.id]);
   }
+  // Once reached, the goal stays reached for this attempt (a population that dips again, a sweep that restarts).
+  if (liveGoal && session && !session.achieved) {
+    setSession({ ...session, achieved: true });
+  }
+  const goalMet = liveGoal || !!session?.achieved;
 
   useEffect(() => {
     saveCompletedChallenges(simId, completed);
@@ -42,12 +49,12 @@ export function ChallengesPanel<P, R>({ simId, challenges, params, readouts, onS
 
   const open = (c: Challenge<P, R>) => {
     setChoice(null);
-    setSession({ id: c.id, answer: null, started: false, showHint: false, revealed: false });
+    setSession({ id: c.id, answer: null, started: false, showHint: false, revealed: false, achieved: false });
   };
 
   const start = (c: Challenge<P, R>, answer: number | null) => {
     onSetup(c.setup);
-    setSession({ id: c.id, answer, started: true, showHint: false, revealed: false });
+    setSession({ id: c.id, answer, started: true, showHint: false, revealed: false, achieved: false });
   };
 
   if (!challenge || !session) {

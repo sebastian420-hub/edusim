@@ -129,9 +129,9 @@ Recommended order, each chosen to reuse what exists and to showcase the GPU:
    (up to 1024² pendulums) views, 4 challenges — see [`DOUBLE-PENDULUM-PLAN.md`](DOUBLE-PENDULUM-PLAN.md).
 2. **Resting membrane potential** (easy): reuses the biology UI and HH concepts (Nernst, Goldman).
 3. ✅ **N-body orbital mechanics** (medium): orbit lab + colliding galaxies, measured Kepler's laws, 4 challenges — see [`NBODY-PLAN.md`](NBODY-PLAN.md).
-4. **A brain on the GPU** (medium–hard): *Axons & Nerves* (HH cable, myelin, a nerve of a thousand fibres and
-   its compound action potential) then *Brain Rhythms* (up to 100 000 spiking neurons, rhythms, cortical waves).
-   Next up — plan in [`BRAIN-PLAN.md`](BRAIN-PLAN.md).
+4. **A brain on the GPU** (medium–hard): ✅ *Axons & Nerves* (HH cable, myelin, a nerve of a thousand fibres and
+   its compound action potential, 7 challenges); next *Brain Rhythms* (up to 100 000 spiking neurons, rhythms,
+   cortical waves). Plan in [`BRAIN-PLAN.md`](BRAIN-PLAN.md).
 
 Each one ships with the full foundation checklist: shader validation, TS twin + tests, smoke test,
 explanation text, at least one measurement tool and a few challenges.

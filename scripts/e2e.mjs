@@ -154,13 +154,13 @@ async function waitForChange(page, reference, message, timeout = 10_000) {
 const text = async (page, selector) => (await page.locator(selector).first().textContent()) ?? "";
 
 // ───────────────────────────── home ─────────────────────────────
-await test("home: compact editorial layout — plates link to the 5 simulations, planned ones are plain text", async (page) => {
+await test("home: compact editorial layout — plates link to the 6 simulations, planned ones are plain text", async (page) => {
   await page.goto(url("/"));
   assert((await page.title()).includes("EduSim"), `title: ${await page.title()}`);
   assert((await page.locator("h1").count()) === 1, "exactly one h1");
   assert((await text(page, "h1")).includes("reach into"), "headline");
   const links = await page.locator("main a[href^='/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
-  assert(links.length === 5, `expected 5 plate links, got ${links.join(",")}`);
+  assert(links.length === 6, `expected 6 plate links, got ${links.join(",")}`);
   for (const l of await page.locator("main a").all()) assert(((await l.textContent()) ?? "").trim().length > 3, "link without text");
   assert((await page.locator("h2").count()) >= 4, "plate headings + index heading");
   for (const subject of ["Physics", "Chemistry", "Computer Science", "Biology"]) {
@@ -195,11 +195,11 @@ await test("home: the plates are one row that scrolls sideways, four at a time o
   const row = page.locator("main ul[aria-label=Simulations]");
   const box = await row.boundingBox();
   const plates = await page.locator("main ul[aria-label=Simulations] > li").evaluateAll((lis) => lis.map((li) => li.getBoundingClientRect()).map((r) => ({ left: r.left, right: r.right })));
-  assert(plates.length === 5, `${plates.length} plates`);
+  assert(plates.length === 6, `${plates.length} plates`);
   const inside = plates.filter((r) => r.left >= box.x - 1 && r.right <= box.x + box.width + 1).length;
   assert(inside === 4, `${inside} plates fully visible (want 4)`);
   assert(await row.evaluate((ul) => ul.scrollWidth > ul.clientWidth + 50), "the row should scroll");
-  await page.locator("[data-plate=hodgkin-huxley]").scrollIntoViewIfNeeded();
+  await page.locator("[data-plate=axon-propagation]").scrollIntoViewIfNeeded();
   await page.waitForTimeout(400);
   const last = await page.locator("main ul[aria-label=Simulations] > li").last().evaluate((li) => li.getBoundingClientRect().right);
   assert(last <= box.x + box.width + 1, "the last plate scrolls into view");
@@ -264,7 +264,7 @@ await test("home: automated accessibility audit (axe) finds no violations, deskt
 });
 
 // ───────────────────────────── home: live plates ─────────────────────────────
-const PLATES = ["wave-interference", "n-body", "double-pendulum", "cellular-automata", "hodgkin-huxley"]; // catalog (= page) order
+const PLATES = ["wave-interference", "n-body", "double-pendulum", "cellular-automata", "hodgkin-huxley", "axon-propagation"]; // catalog (= page) order
 const liveCanvases = (page) => page.locator("[data-testid=plate-live]");
 const waitLive = (page, id, timeout = 45_000) => page.waitForSelector(`[data-plate="${id}"] [data-testid=plate-live][data-state=ready]`, { timeout });
 /** Fraction of lit pixels in a plate's live canvas (a blank canvas would be ~0). */
@@ -281,7 +281,7 @@ const litFraction = (page, id) =>
     return lit / (bitmap.width * bitmap.height);
   }, id);
 
-await test("home plates: hover runs the real simulation (all five), one at a time, and leaving restores the poster", async (page) => {
+await test("home plates: hover runs the real simulation (all six), one at a time, and leaving restores the poster", async (page) => {
   await page.goto(url("/"));
   assert((await liveCanvases(page).count()) === 0, "no live canvas before any intent");
   for (const id of PLATES) {
@@ -1150,6 +1150,7 @@ await test("double-pendulum: a high release flips, RK4 keeps the energy, the pha
   assert(parseInt(await dpText(page, "dp-flips")) > 0, `flips: ${await dpText(page, "dp-flips")}`);
   assert((await page.locator("figure svg[aria-label^='Phase portrait'] path").count()) === 1, "phase portrait");
   await page.getByRole("radio", { name: "Euler" }).check();
+  await dpWait(page, "dp-time", "parseFloat(t) < 2"); // the switch restarts the run: wait for it before timing it
   await dpWait(page, "dp-time", "parseFloat(t) > 4");
   assert(Math.abs(await dpNumber(page, "dp-drift")) > 0.1, `Euler should visibly change the energy: ${await dpText(page, "dp-drift")}`);
   await shot(page, "pendulum");
@@ -1224,8 +1225,11 @@ await test("double-pendulum: fractal — develops on the GPU, hover reads flip t
   await shot(page, "pendulum-fractal");
   // Scroll to zoom: the window is written to the link once the wheel stops.
   for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -100);
-  await page.waitForFunction(() => new URL(location.href).searchParams.has("fspan"), null, { timeout: 5_000 });
-  assert(Number(param(page, "fspan")) < (2 * Math.PI) / 1.9, `zoomed span ${param(page, "fspan")}`);
+  // Written 300 ms after the wheel stops (possibly between ticks on a slow device): wait for all three ticks.
+  const zoomed = await page
+    .waitForFunction(() => Number(new URL(location.href).searchParams.get("fspan") ?? 99) < (2 * Math.PI) / 1.9, null, { timeout: 5_000 })
+    .then(() => true, () => false);
+  assert(zoomed, `zoomed span ${param(page, "fspan")}`);
   await page.getByRole("button", { name: "Full map" }).click();
   await page.waitForFunction(() => !new URL(location.href).searchParams.has("fspan"));
   // A click on a pixel opens that start as a pendulum: three quarters across, one quarter down = (90°, 90°).
@@ -1274,6 +1278,121 @@ await test("double-pendulum: challenge flow (can it flip?) with persistence", as
   await page.locator("canvas").first().waitFor();
   await page.getByRole("tab", { name: "Challenges" }).click();
   assert((await page.locator("text=/1 of 4 done/").count()) === 1, "completion not persisted");
+});
+
+// ───────────────────────────── axons & nerves ─────────────────────────────
+const axText = async (page, id) => (await text(page, `[data-testid=${id}]`)).trim();
+const axNumber = async (page, id) => parseFloat((await axText(page, id)).replace("−", "-"));
+/** Waits for a finished sweep of the current settings (the outcome reads "running…" until then). */
+const axSweep = (page, timeout = 90_000) => page.waitForFunction(() => /got through|blocked|no spike/.test(document.querySelector("[data-testid=ax-outcome]")?.textContent ?? ""), null, { timeout });
+
+await test("axons: the squid axon conducts at Hodgkin & Huxley's speed, measured between two electrodes", async (page) => {
+  await open(page, "/biology/axon-propagation?speed=20");
+  assert((await page.locator("canvas").count()) === 2, "WebGPU canvas + overlay");
+  await axSweep(page);
+  const v = await axNumber(page, "ax-velocity");
+  assert(Math.abs(v - 18.5) < 0.6, `speed ${v} m/s (HH 1952: 18.8 computed)`);
+  assert(Math.abs((await axNumber(page, "ax-peak")) - 25) < 3, `spike height ${await axText(page, "ax-peak")}`);
+  assert((await axText(page, "ax-outcome")) === "got through", "outcome");
+  assert((await page.locator("figure svg[aria-label^='Voltage at the electrodes'] path").count()) === 2, "two traces");
+  await shot(page, "axon");
+});
+
+await test("axons: myelin makes a 10 µm fibre ~9× faster; stripping it blocks the signal", async (page) => {
+  await open(page, "/biology/axon-propagation?diameter=10&speed=20");
+  await axSweep(page);
+  const bare = await axNumber(page, "ax-velocity");
+  await page.getByRole("checkbox", { name: /^Myelin/ }).check();
+  await page.waitForFunction(() => (document.querySelector("[data-testid=ax-outcome]")?.textContent ?? "") === "running…");
+  await axSweep(page);
+  const myelinated = await axNumber(page, "ax-velocity");
+  assert(myelinated / bare > 8 && myelinated / bare < 11, `bare ${bare} m/s, myelinated ${myelinated} m/s`);
+  await slider(page, "Myelin left").fill("0");
+  await page.waitForFunction(() => (document.querySelector("[data-testid=ax-outcome]")?.textContent ?? "") === "blocked", null, { timeout: 90_000 });
+  await shot(page, "axon-myelin");
+});
+
+await test("axons: spikes meeting head-on annihilate; a second pulse inside the refractory period fails", async (page) => {
+  await open(page, "/biology/axon-propagation?pulses=both&speed=20");
+  await axSweep(page);
+  assert((await axText(page, "ax-spikes")) === "1 / 1", `both ends: ${await axText(page, "ax-spikes")}`);
+  await page.goto(url("/biology/axon-propagation?pulses=pair&gap=2&speed=20"));
+  await axSweep(page);
+  assert((await axText(page, "ax-spikes")) === "1 / 1", `2 ms apart: ${await axText(page, "ax-spikes")}`);
+  await page.goto(url("/biology/axon-propagation?pulses=pair&gap=8&speed=20"));
+  await axSweep(page);
+  assert((await axText(page, "ax-spikes")) === "2 / 2", `8 ms apart: ${await axText(page, "ax-spikes")}`);
+});
+
+await test("axons: dragging an electrode and the treated stretch edits the link; lidocaine on a long stretch blocks", async (page) => {
+  await open(page, "/biology/axon-propagation?drug=lidocaine&speed=20");
+  const box = await page.locator("canvas").first().boundingBox();
+  const X = (f) => box.x + box.width * (0.05 + 0.9 * f);
+  const tubeY = box.y + box.height * 0.17;
+  await page.mouse.move(X(0.7), tubeY);
+  await page.mouse.down();
+  await page.mouse.move(X(0.85), tubeY, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForFunction(() => new URL(location.href).searchParams.has("e2"));
+  assert(Math.abs(Number(new URL(page.url()).searchParams.get("e2")) - 0.85) < 0.02, `e2 = ${page.url()}`);
+  // The default stretch (45–55 %, about 0.8 length constants of lidocaine) blocks; drag its right edge back to 47 %.
+  await axSweep(page);
+  assert((await axText(page, "ax-outcome")) === "blocked", `0.45–0.55: ${await axText(page, "ax-outcome")}`);
+  await page.mouse.move(X(0.55), tubeY);
+  await page.mouse.down();
+  await page.mouse.move(X(0.47), tubeY, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForFunction(() => Number(new URL(location.href).searchParams.get("to")) < 0.5);
+  await page.waitForFunction(() => (document.querySelector("[data-testid=ax-outcome]")?.textContent ?? "") === "got through", null, { timeout: 90_000 });
+});
+
+await test("nerves: the compound action potential shows A and C waves, spreading apart with distance", async (page) => {
+  await open(page, "/biology/axon-propagation?view=nerve&fibres=100&distance=0.5&speed=20");
+  const latencies = async () => {
+    await page.waitForFunction(() => /\d/.test(document.querySelector("[data-testid=nv-c]")?.textContent ?? ""), null, { timeout: 120_000 });
+    return [await axNumber(page, "nv-a"), await axNumber(page, "nv-c")];
+  };
+  const [a1, c1] = await latencies();
+  await slider(page, "Recording distance").fill("1.5");
+  await page.waitForFunction(() => !/\d/.test(document.querySelector("[data-testid=nv-c]")?.textContent ?? ""));
+  const [a2, c2] = await latencies();
+  assert(c2 - a2 > 2 * (c1 - a1), `A/C at 0.5 cm: ${a1}/${c1} ms; at 1.5 cm: ${a2}/${c2} ms`);
+  await shot(page, "nerve");
+  await assertNoGpuProblem(page);
+});
+
+await test("axons: URL state, hostile links, copy link, defaults", async (page) => {
+  await open(page, "/biology/axon-propagation?diameter=10&myelin=1&temp=25&pulses=pair&gap=4&drug=ttx&speed=5");
+  assert((await page.getByRole("checkbox", { name: /^Myelin/ }).isChecked()), "myelin from the link");
+  assert((await slider(page, "Temperature").inputValue()) === "25", "temperature from the link");
+  assert((await slider(page, "Interval").inputValue()) === "4", "pair interval from the link");
+  assert((await page.getByLabel("Drug").inputValue()) === "ttx", "drug from the link");
+  await page.getByRole("button", { name: "Copy link" }).click();
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  assert(clip === page.url() && clip.includes("drug=ttx"), `clipboard: ${clip}`);
+  await page.getByRole("button", { name: "Defaults" }).click();
+  assert(!page.url().includes("?"), `URL not cleared: ${page.url()}`);
+  await page.goto(url("/biology/axon-propagation?view=brain&diameter=1e9&temp=-40&drug=coffee&fibres=7"));
+  await page.locator("canvas").first().waitFor();
+  await page.waitForSelector("[data-testid=gpu-status][data-state=loading]", { state: "detached", timeout: 30_000 });
+  assert((await page.getByRole("button", { name: "Axon", exact: true }).getAttribute("aria-pressed")) === "true", "unknown view falls back to the axon");
+  assert((await slider(page, "Temperature").inputValue()) === "0", "temperature clamps to 0 °C");
+  await assertNoGpuProblem(page);
+});
+
+await test("axons: challenge flow (head-on) with persistence", async (page) => {
+  await open(page, "/biology/axon-propagation?speed=20");
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /Head-on/ }).click();
+  await page.getByLabel("annihilate").check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("pulses") === "both");
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 90_000 });
+  assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
+  await page.reload();
+  await page.locator("canvas").first().waitFor();
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  assert((await page.locator("text=/1 of 7 done/").count()) === 1, "completion not persisted");
 });
 
 // ───────────────────────────── resilience ─────────────────────────────
@@ -1387,9 +1506,13 @@ await test("phone: pinch-zoom on the double pendulum's fractal map", async (page
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
   await pinch(page, [[cx - 40, cy], [cx + 40, cy]], [[cx - 80, cy], [cx + 80, cy]]);
-  await page.waitForFunction(() => new URL(location.href).searchParams.has("fspan"), null, { timeout: 5_000 });
+  // The window is written to the link 300 ms after the gesture pauses; on a slow device that can happen mid-pinch,
+  // so wait for the final value rather than the first one.
+  const settled = await page
+    .waitForFunction(() => Math.abs(Number(new URL(location.href).searchParams.get("fspan")) / Math.PI - 1) < 0.05, null, { timeout: 5_000 })
+    .then(() => true, () => false);
   const span = Number(param(page, "fspan"));
-  assert(Math.abs(span / Math.PI - 1) < 0.05, `pinching fingers apart 2× should halve the window (2π → π): ${span}`);
+  assert(settled, `pinching fingers apart 2× should halve the window (2π → π): ${span}`);
   assert(new URL(page.url()).searchParams.get("view") === "fractal", "a pinch must not open a pendulum");
   await assertNoGpuProblem(page);
 }, { context: PHONE });
@@ -1406,7 +1529,7 @@ await test("phone: pinching over a planet zooms instead of dragging it (n-body)"
 }, { context: PHONE });
 
 // ───────────────────────────── accessibility & polish (phase B) ─────────────────────────────
-const SIM_ROUTES = ["/physics/wave-interference", "/physics/n-body", "/physics/double-pendulum", "/cs/cellular-automata", "/biology/hodgkin-huxley"];
+const SIM_ROUTES = ["/physics/wave-interference", "/physics/n-body", "/physics/double-pendulum", "/cs/cellular-automata", "/biology/hodgkin-huxley", "/biology/axon-propagation"];
 
 await test("a11y: every simulation page passes the axe audit, desktop and phone", async (page) => {
   const problems = [];
@@ -1444,6 +1567,7 @@ await test("a11y: each simulation describes its canvas for screen readers (polit
     "/physics/wave-interference": /Double slit, amplitude view\. Bright fringes .* units apart/,
     "/physics/n-body": /Year \d+\.\d\. Earth: /,
     "/physics/double-pendulum": /Time \d+\.\d s, angles .* flips, energy changed by/,
+    "/biology/axon-propagation": /Sweep \d+\.\d of [\d.]+ ms\./,
     "/cs/cellular-automata": /Generation \d+: 36 live cells\./,
     "/biology/hodgkin-huxley": /fires steadily at \d+ spikes per second/,
   };

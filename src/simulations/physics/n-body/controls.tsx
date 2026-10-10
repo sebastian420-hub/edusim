@@ -158,6 +158,9 @@ export default function NBodyControls() {
   /** The picture edits start from: the running system if it has moved, else the stored setup. */
   const editBase = () => (sim && stats && stats.time > 0 ? sim.currentBodies() : setup);
   const commitBodies = (bodies: Body[], fit = false) => {
+    // The arrows' length comes from the setup; update it now, not after the next render, so that an arrow grabbed
+    // right after this edit is hit where it is drawn.
+    looks.current = { ...looks.current, arrowTime: arrowYears(bodies) };
     // Measurements of the old setup are stale now; showing them would also push old values back into the sliders.
     setStats(null);
     setPlaying(false);
@@ -182,12 +185,14 @@ export default function NBodyControls() {
       drag.current = null;
       return;
     }
-    const hit = orbit && overlayState.current ? hitTest(overlayState.current, p.x, p.y) : null;
+    // Arrow length as it is now (the last drawn frame may predate an edit made a moment ago).
+    const arrowTime = looks.current.arrowTime;
+    const hit = orbit && overlayState.current ? hitTest({ ...overlayState.current, arrowTime }, p.x, p.y) : null;
     if (hit) {
       setSelected(hit.index);
       setPlaying(false);
       const base = sim.currentBodies();
-      drag.current = { kind: hit.kind, index: hit.index, base, last: base, ...p, arrowTime: overlayState.current!.arrowTime };
+      drag.current = { kind: hit.kind, index: hit.index, base, last: base, ...p, arrowTime };
     } else {
       drag.current = { kind: "pan", index: -1, base: [], last: [], ...p, arrowTime: 0 };
     }
