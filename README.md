@@ -8,6 +8,7 @@ Built with Next.js 16 (App Router, Turbopack), React 19, Tailwind 4 and [vgpu](h
 | Wave Interference & Diffraction | Physics | Fragment shader; Huygens–Fresnel slits as phasor sums |
 | N-Body Orbital Mechanics | Physics | Tiled all-pairs gravity compute shader (up to 16 384 bodies), leapfrog integrator, instanced rendering |
 | Double Pendulum Chaos | Physics | One RK4 compute kernel for every view: a 32-bit GPU crowd of up to 10 000 pendulums against a 64-bit CPU pair, and a flip-time fractal of up to 1024² pendulums (one per pixel) |
+| Axons & Nerves | Biology | Hodgkin–Huxley cables, one GPU invocation per fibre solving its tridiagonal system implicitly (Thomas algorithm); a nerve of up to 1 000 fibres and its compound action potential |
 | Hodgkin–Huxley Neuron | Biology | Compute shader integrates the ODEs; fragment shader plots the traces |
 | Cellular Automata | Computer Science | Ping-pong compute shader over grids up to 2048²; a reduction shader counts and fingerprints every generation; pan/zoom renderer |
 
@@ -37,7 +38,7 @@ explanatory message instead of a blank canvas.
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
 | `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
-| `pnpm e2e` | Full browser suite (71 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
+| `pnpm e2e` | Full browser suite (78 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
 | `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
 | `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
@@ -106,6 +107,15 @@ src/
   the Butterfly crowd (`crowdAngles` keeps its 32-bit starts distinct) and the Fractal run `pendulum.wgsl` on the GPU.
   The fractal is seeded on the GPU (`seed.wgsl`), coloured by `fractal.wgsl` straight from the flip-time buffer, and
   the cursor readout copies out a single pixel instead of reading the map back.
+- **Axons & Nerves:** `cable.ts` is the 64-bit twin: HH membranes (shared with the neuron sim) joined into
+  compartments, a bare axon in equal compartments or a myelinated one as nodes of Ranvier and internodes (myelin
+  thickness ∝ diameter, nodes ~1 µm: Rushton's similarity, so speed ∝ diameter). Each step relaxes the gates, then
+  solves the voltages implicitly along the fibre (conductances linearised, Thomas algorithm): an explicit step would
+  need Δt < 0.004 ms for the squid axon. `cable.wgsl` runs one fibre per invocation for many steps per dispatch and
+  writes the kymograph, two electrode traces and each fibre's extracellular signal into one output buffer (four
+  storage buffers in all, within compatibility-mode limits); `cap.wgsl` sums the signals into the compound action
+  potential. Tested: HH 1952's 18.8 m/s (within 2 %), √d for bare and ∝ d for myelinated fibres, annihilation,
+  refractoriness, TTX/lidocaine and demyelination block, heat block.
 - **Cellular automata measurement:** `count.wgsl` reduces the grid to a live-cell count and an order-independent
   fingerprint every generation (into a 1024-slot ring buffer); `sim.ts` reads it back at most every 100 ms and
   `tracker.ts` classifies the history (extinct / still life / oscillator with period / moving pattern). It only runs

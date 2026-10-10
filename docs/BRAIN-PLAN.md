@@ -5,6 +5,15 @@ The flagship biology work: grow the single Hodgkin–Huxley neuron into **signal
 correct. Same bar as every other simulation: a TypeScript twin of every shader, GPU-vs-twin tests, shareable
 settings, guided challenges, e2e scenarios, a poster and a live home-page preview.
 
+> **Status:** *Axons & Nerves* shipped (two simulations, Axons first, as recommended). What changed while
+> building it: (1) the squid axon's diffusion coefficient is 0.336 cm²/ms, not 0.034, so an explicit step would need
+> Δt < 0.004 ms: *every* fibre uses the implicit Thomas solve (with the ionic conductances linearised into it);
+> (2) one GPU invocation advances a whole fibre for many steps per dispatch, so the GPU parallelism is across fibres
+> (the nerve), and the single-axon view needs no read-back of its state to draw; (3) for speed ∝ diameter the
+> myelin must thicken with the fibre while nodes stay ~1 µm (Rushton's similarity) — scaling the nodes too, or not
+> the myelin, gives d^1.3 or d^0.4; (4) the compound action potential blanks the stimulus artifact, as an amplifier
+> does. Next: *Brain Rhythms*.
+
 It ships as **two simulations**, built in this order:
 
 1. **Axons & Nerves** (catalog id `axon-propagation`, already listed as planned): one axon, then a whole nerve
@@ -76,8 +85,9 @@ compound action potential lab, Backyard Brains cockroach labs):
 
 - **Operator splitting** each step: (1) gates and ionic currents per compartment, Rush–Larsen as in the HH sim,
   fully parallel; (2) axial diffusion.
-- Squid axon with Δx = 0.5 mm: diffusion coefficient a/(2RᵢC) ≈ 0.034 cm²/ms, so explicit diffusion is stable
-  for Δt < Δx²/(2D) ≈ 0.037 ms; the HH step of 0.01 ms is well inside. **Explicit is fine for the squid axon.**
+- Squid axon with Δx = 0.5 mm: diffusion coefficient a/(2RᵢC) ≈ 0.336 cm²/ms, so explicit diffusion would only be
+  stable for Δt < Δx²/(2D) ≈ 0.004 ms, below the HH step of 0.01 ms. **So every fibre is solved implicitly.**
+  (Corrected while building: an earlier draft of this plan had the coefficient ten times too small.)
 - Myelinated internodes (tiny capacitance) make explicit diffusion stiff. So diffusion is **implicit (backward
   Euler), solved with the Thomas algorithm, one GPU thread per fibre** — the nerve view has a thousand fibres, so
   the GPU stays busy, and each solve is exact. (NEURON solves the same tridiagonal system with the Hines

@@ -10,6 +10,10 @@ interface MiniChartProps {
   yLabel: string;
   x: number[];
   y: number[];
+  /** An optional second series over the same x, drawn in a second colour. */
+  y2?: number[];
+  /** Legend labels for the two series (shown when `y2` is given). */
+  labels?: [string, string];
   /** Vertical reference lines (e.g. "you are here"). */
   markers?: ChartMarker[];
   /** A highlighted point on the curve. */
@@ -34,13 +38,14 @@ const H = 150;
 const PAD = { left: 38, right: 10, top: 10, bottom: 30 };
 
 /** Small dependency-free SVG line chart with axes, vertical markers and one highlighted point. */
-export function MiniChart({ title, xLabel, yLabel, x, y, markers = [], point, yMax, yMin = 0, xMin: xLow, xMax: xHigh, points = [], format = (v) => String(Math.round(v)), summary, className = "" }: MiniChartProps) {
+export function MiniChart({ title, xLabel, yLabel, x, y, y2, labels, markers = [], point, yMax, yMin = 0, xMin: xLow, xMax: xHigh, points = [], format = (v) => String(Math.round(v)), summary, className = "" }: MiniChartProps) {
   const xMin = xLow ?? Math.min(...x);
   const xMax = xHigh ?? Math.max(...x);
   const yTop = yMax ?? Math.max(1, ...y);
   const sx = (v: number) => PAD.left + ((v - xMin) / (xMax - xMin || 1)) * (W - PAD.left - PAD.right);
   const sy = (v: number) => H - PAD.bottom - ((v - yMin) / (yTop - yMin || 1)) * (H - PAD.top - PAD.bottom);
-  const path = x.map((xv, i) => `${i === 0 ? "M" : "L"}${sx(xv).toFixed(1)},${sy(y[i]).toFixed(1)}`).join(" ");
+  const pathOf = (ys: number[]) => x.map((xv, i) => `${i === 0 ? "M" : "L"}${sx(xv).toFixed(1)},${sy(ys[i]).toFixed(1)}`).join(" ");
+  const path = pathOf(y);
   const xTicks = [xMin, (xMin + xMax) / 2, xMax];
   const yTicks = [yMin, (yMin + yTop) / 2, yTop];
 
@@ -77,7 +82,18 @@ export function MiniChart({ title, xLabel, yLabel, x, y, markers = [], point, yM
             )}
           </g>
         ))}
+        {x.length > 1 && y2 && <path d={pathOf(y2)} fill="none" stroke="#f472b6" strokeWidth={1.5} />}
         {x.length > 1 && <path d={path} fill="none" stroke="#34d399" strokeWidth={1.75} />}
+        {y2 && labels && (
+          <g fontSize={8.5}>
+            <text x={W - PAD.right - 4} y={PAD.top + 8} textAnchor="end" fill="#34d399">
+              {labels[0]}
+            </text>
+            <text x={W - PAD.right - 4} y={PAD.top + 18} textAnchor="end" fill="#f472b6">
+              {labels[1]}
+            </text>
+          </g>
+        )}
         {points.map((p, i) => (
           <circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={3} fill="#fbbf24" stroke="#0f172a" strokeWidth={1} />
         ))}

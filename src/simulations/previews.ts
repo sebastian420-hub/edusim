@@ -8,6 +8,9 @@ import { createCellularAutomata } from "./cs/cellular-automata/sim";
 import type { CellularAutomataHandle } from "./cs/cellular-automata/sim";
 import { createHodgkinHuxley } from "./biology/hodgkin-huxley/sim";
 import type { HHHandle } from "./biology/hodgkin-huxley/sim";
+import { createAxonSim } from "./biology/axon-propagation/sim";
+import type { AxonHandle } from "./biology/axon-propagation/sim";
+import { AXON_DEFAULTS } from "./biology/axon-propagation/settings";
 import { createDoublePendulum } from "./physics/double-pendulum/sim";
 import type { PendulumHandle } from "./physics/double-pendulum/sim";
 import { DEFAULT_PENDULUM, FULL_WINDOW } from "./physics/double-pendulum/pendulum";
@@ -62,6 +65,16 @@ export const PREVIEWS: Record<string, Preview> = {
     setup(handle) {
       // The flip-time fractal developing from dark: a quarter of a million pendulums, one per pixel.
       handle.configure({ view: "fractal", start: [0, 0], params: DEFAULT_PENDULUM, integrator: "rk4", count: 2, nudge: 1e-9, fractalSize: 512, window: FULL_WINDOW, boundary: false });
+      handle.play();
+    },
+  }),
+
+  "axon-propagation": define<AxonHandle>({
+    factory: (ctx) => createAxonSim(ctx),
+    setup(handle) {
+      // Two spikes fired from both ends meet and annihilate: an X that never crosses, sweep after sweep.
+      handle.configure({ ...AXON_DEFAULTS, pulses: "both" });
+      handle.setSpeed(4);
       handle.play();
     },
   }),

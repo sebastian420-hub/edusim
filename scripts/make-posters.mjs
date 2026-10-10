@@ -67,6 +67,17 @@ const POSTERS = [
     },
   },
   {
+    id: "axon-propagation",
+    route: "/biology/axon-propagation?pulses=both&speed=20",
+    focus: { x: 0.5, y: 0.6 },
+    async prepare(page) {
+      // A finished sweep: two spikes from both ends meeting in the middle.
+      await page.waitForFunction(() => /got through|blocked/.test(document.querySelector("[data-testid=ax-outcome]")?.textContent ?? ""), null, { timeout: 240_000 });
+      await page.getByRole("button", { name: "Pause", exact: true }).click();
+      await wait(1500);
+    },
+  },
+  {
     id: "cellular-automata",
     route: "/cs/cellular-automata",
     focus: { x: 0.5, y: 0.5 },
@@ -139,7 +150,7 @@ await withServer(
       if (poster.init) await context.addInitScript(poster.init);
       const page = await context.newPage();
       await page.goto(base + poster.route);
-      await page.locator("canvas").waitFor();
+      await page.locator("canvas").first().waitFor();
       await page.waitForSelector("[data-testid=gpu-status][data-state=loading]", { state: "detached", timeout: 60_000 });
       await poster.prepare(page);
 
@@ -170,7 +181,7 @@ await withServer(
             <div style="margin-top:26px;font-size:18px;line-height:1.45;color:#939bab">Live models of waves, orbits, chaos, neurons and cellular life, computed on your graphics card.</div>
             <div style="margin-top:34px;font:500 22px var(--font-geist-sans),sans-serif;letter-spacing:-.01em">EduSim</div>
           </div>
-          <div style="display:flex;gap:12px">${images.map((src) => `<img src="${src}" style="width:${images.length > 4 ? 128 : images.length > 3 ? 168 : 214}px;height:${images.length > 4 ? 141 : images.length > 3 ? 185 : 235}px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
+          <div style="display:flex;gap:12px">${images.map((src) => `<img src="${src}" style="width:${images.length > 5 ? 104 : images.length > 4 ? 128 : images.length > 3 ? 168 : 214}px;height:${images.length > 5 ? 114 : images.length > 4 ? 141 : images.length > 3 ? 185 : 235}px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
         </div>`;
       document.body.style.margin = "0";
     }, dataUrls);

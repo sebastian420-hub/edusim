@@ -20,6 +20,9 @@ import { createEngine as createPendulumEngine } from "./physics/double-pendulum/
 import { createRenderer as createPendulumRenderer } from "./physics/double-pendulum/renderer";
 import { DEFAULT_PENDULUM, energy as pendulumEnergy, flipTime, FULL_WINDOW, pixelAngles, rad, step as pendulumStep } from "./physics/double-pendulum/pendulum";
 import type { State as PendulumState } from "./physics/double-pendulum/pendulum";
+import { createEngine as createAxonEngine, stimulusWeights } from "./biology/axon-propagation/engine";
+import { bareFibre, conductionVelocity, DT as CABLE_DT, extracellular, HH_TEMPERATURE, kick, lengthConstant, myelinatedFibre, restState, runFibre, scratchFor, SQUID_DIAMETER, stepCable, stimulusAt } from "./biology/axon-propagation/cable";
+import type { Fibre } from "./biology/axon-propagation/cable";
 import { DEFAULT_PARAMS, DT_MS, HISTORY_SAMPLES, REST_STATE, SAMPLE_EVERY, simulate } from "./biology/hodgkin-huxley/hh";
 
 let gpu: NodeGpu | null = null;
@@ -505,5 +508,89 @@ describe("Double pendulum engine vs CPU twin", () => {
     r2.dispose();
     engine.dispose();
     f2.dispose();
+  });
+});
+
+describe("Axon cable kernel vs CPU twin", () => {
+  const squid = () => bareFibre(SQUID_DIAMETER, 8 * lengthConstant(SQUID_DIAMETER), 400);
+  const fibreArrivals = (data: Float32Array, offset: number, n: number) => Float64Array.from({ length: n }, (_, i) => (data[(offset + i) * 8 + 6] < 0 ? NaN : data[(offset + i) * 8 + 6]));
+
+  needsGpu("the squid axon: same arrival times and conduction velocity as the twin (f32 vs f64)", async (gpu) => {
+    const f = squid();
+    const engine = createAxonEngine(gpu, [f]);
+    const pulse = kick(f);
+    engine.setStimulus(stimulusWeights([f], () => pulse), null, pulse.startMs, -1, pulse.durationMs);
+    engine.step(600, { celsius: HH_TEMPERATURE, dt: CABLE_DT });
+    const { data, time } = await engine.readDyn();
+    expect(time).toBeCloseTo(6, 9);
+    const twin = runFibre(f, HH_TEMPERATURE, [pulse], 6);
+    const gpuArrival = fibreArrivals(data, 0, f.n);
+    for (const i of [40, 120, 200, 280, 360, 399]) expect(Math.abs(gpuArrival[i] - twin.arrival[i]), `compartment ${i}`).toBeLessThan(0.005);
+    expect(conductionVelocity(f, gpuArrival)! / conductionVelocity(f, twin.arrival)!).toBeCloseTo(1, 3);
+    for (let i = 0; i < f.n; i += 37) expect(Math.abs(data[i * 8] - twin.state.V[i]), `V ${i}`).toBeLessThan(0.05);
+    engine.dispose();
+  });
+
+  needsGpu("many fibres at once (bare and myelinated, counts around the 64-wide workgroup): each matches its twin", async (gpu) => {
+    const fibres: Fibre[] = [];
+    for (let k = 0; k < 66; k++) fibres.push(k % 3 === 0 ? myelinatedFibre(2 + (k % 7), 8 * 100 * (2 + (k % 7)) * 1e-4, 4) : bareFibre(0.5 + (k % 5), 6 * lengthConstant(0.5 + (k % 5)), 60 + (k % 4)));
+    const engine = createAxonEngine(gpu, fibres, { maxSteps: 50 });
+    const pulses = fibres.map((f) => kick(f, 0.2));
+    engine.setStimulus(stimulusWeights(fibres, (_, k) => pulses[k]), null, 0.2, -1, 0.2);
+    engine.step(250, { celsius: HH_TEMPERATURE, dt: 0.02 });
+    const { data } = await engine.readDyn();
+    let offset = 0;
+    for (const [k, f] of fibres.entries()) {
+      const twin = runFibre(f, HH_TEMPERATURE, [pulses[k]], 5, 0.02);
+      const gpuArrival = fibreArrivals(data, offset, f.n);
+      for (const i of [Math.floor(f.n / 2), f.n - 1]) {
+        if (Number.isNaN(twin.arrival[i])) expect(gpuArrival[i], `fibre ${k} compartment ${i}`).toBeNaN();
+        else expect(Math.abs(gpuArrival[i] - twin.arrival[i]), `fibre ${k} compartment ${i}`).toBeLessThan(0.01);
+      }
+      offset += f.n;
+    }
+    engine.dispose();
+  });
+
+  needsGpu("traces, kymograph and the compound signal record what the twin computes", async (gpu) => {
+    const fibres = [squid(), bareFibre(200, 8 * lengthConstant(SQUID_DIAMETER), 400)];
+    const engine = createAxonEngine(gpu, fibres, { histRows: 64, probeLen: 512, maxSteps: 40, capLen: 1024 });
+    const pulses = fibres.map((f) => kick(f));
+    engine.setStimulus(stimulusWeights(fibres, (_, k) => pulses[k]), null, 0.5, -1, 0.2);
+    const electrode = { x: 4, height: 0.5 };
+    engine.step(300, { celsius: HH_TEMPERATURE, dt: CABLE_DT, histEvery: 10, probes: [100, 300], electrode });
+    // Twin, step by step: the compound signal is the sum of both fibres' extracellular potentials.
+    const states = fibres.map((f) => restState(f));
+    const scratches = fibres.map((f) => scratchFor(f.n));
+    const stims = fibres.map((f) => new Float64Array(f.n));
+    const capTwin: number[] = [];
+    const probeTwin: number[][] = [];
+    let kymoTwin = 0;
+    for (let k = 0; k < 300; k++) {
+      let sum = 0;
+      fibres.forEach((f, j) => {
+        const on = stimulusAt([pulses[j]], k * CABLE_DT, stims[j]);
+        stepCable(f, states[j], HH_TEMPERATURE, on ? stims[j] : null, scratches[j]);
+        sum += extracellular(f, states[j].V, on ? stims[j] : null, electrode.x, electrode.height);
+      });
+      capTwin.push(sum);
+      probeTwin.push([states[0].V[100], states[0].V[300]]);
+      if (k + 1 === 200) kymoTwin = states[0].V[150];
+    }
+    const L = engine.layout;
+    const cap = await engine.readOut(L.capOffset, 300);
+    const scale = Math.max(...capTwin.map(Math.abs));
+    for (let k = 0; k < 300; k += 7) expect(Math.abs(cap[k] - capTwin[k]) / scale, `cap ${k}`).toBeLessThan(0.01);
+    const probes = await engine.readOut(L.probeOffset, 2 * 512);
+    for (const k of [50, 150, 299]) {
+      const slot = (k + 1) % 512;
+      expect(probes[2 * slot]).toBeCloseTo(probeTwin[k][0], 1);
+      expect(probes[2 * slot + 1]).toBeCloseTo(probeTwin[k][1], 1);
+    }
+    // Kymograph row r (every 10 steps) holds fibre 0's voltages after step 10·r.
+    const hist = await engine.readOut(L.histOffset, 64 * fibres[0].n);
+    const row = 20; // after step 200
+    expect(hist[row * fibres[0].n + 150]).toBeCloseTo(kymoTwin, 1);
+    engine.dispose();
   });
 });
