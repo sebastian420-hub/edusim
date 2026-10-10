@@ -13,6 +13,8 @@ export interface ParameterSliderProps {
   decimals?: number;
   color?: "blue" | "green" | "purple" | "rose" | "red" | "amber" | "slate";
   className?: string;
+  /** Logarithmic scale (for values spanning decades; min must be > 0). `step` is then ignored: 200 positions. */
+  log?: boolean;
 }
 
 /** accent-* colours the native thumb; text-* is the thumb colour of the larger touch-screen thumb (globals.css). */
@@ -42,9 +44,13 @@ export function ParameterSlider({
   decimals,
   color = "blue",
   className = "",
+  log = false,
 }: ParameterSliderProps) {
   const id = useId();
   const digits = decimals ?? decimalsOf(step);
+  // On a log scale the input runs over log10 of the value; what it reports back is rounded to `digits`.
+  const toInput = (v: number) => (log ? Math.log10(v) : v);
+  const fromInput = (x: number) => (log ? Number((10 ** x).toFixed(digits)) : x);
 
   return (
     <div className={`flex w-full flex-col gap-1 ${className}`}>
@@ -60,11 +66,12 @@ export function ParameterSlider({
       <input
         id={id}
         type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
+        min={toInput(min)}
+        max={toInput(max)}
+        step={log ? (toInput(max) - toInput(min)) / 200 : step}
+        value={toInput(value)}
+        aria-valuetext={`${value.toFixed(digits)}${unit}`}
+        onChange={(e) => onChange(fromInput(parseFloat(e.target.value)))}
         className={`slider h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-slate-700 ${ACCENTS[color]}`}
       />
       <div className="flex justify-between px-0.5 text-[10px] text-slate-400">

@@ -101,7 +101,7 @@ export function createEngine(gpu: Gpu, fibres: readonly Fibre[], options: Engine
     fibres,
     total,
     layout: { histRows, histOffset, probeLen, probeOffset, capLen, capOffset, n0 },
-    buffers: { out, dyn } as { out: StorageBuffer; dyn: StorageBuffer },
+    buffers: { out, dyn, comps: compBuffer, fibres: fibreBuffer } as { out: StorageBuffer; dyn: StorageBuffer; comps: StorageBuffer; fibres: StorageBuffer },
     get time() {
       return time;
     },
