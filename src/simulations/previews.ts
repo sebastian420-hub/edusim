@@ -17,6 +17,9 @@ import { DEFAULT_PENDULUM, FULL_WINDOW } from "./physics/double-pendulum/pendulu
 import { createNBody } from "./physics/n-body/sim";
 import type { NBodyHandle } from "./physics/n-body/sim";
 import { createWaveSim } from "./physics/wave-interference/sim";
+import { createNeuralNet } from "./cs/neural-net/sim";
+import type { NetHandle } from "./cs/neural-net/sim";
+import { NET_DEFAULTS, netConfigOf } from "./cs/neural-net/settings";
 import type { WaveHandle } from "./physics/wave-interference/sim";
 
 export interface Preview {
@@ -66,6 +69,22 @@ export const PREVIEWS: Record<string, Preview> = {
       // The flip-time fractal developing from dark: a quarter of a million pendulums, one per pixel.
       handle.configure({ view: "fractal", start: [0, 0], params: DEFAULT_PENDULUM, integrator: "rk4", count: 2, nudge: 1e-9, fractalSize: 512, window: FULL_WINDOW, boundary: false });
       handle.play();
+    },
+  }),
+
+  "neural-net-viz": define<NetHandle>({
+    factory: (ctx) => createNeuralNet(ctx),
+    setup(handle) {
+      // The default spiral being untangled, from a fresh random start every 12 s.
+      let seed = 1;
+      const start = () => handle.configure(netConfigOf({ ...NET_DEFAULTS, seed, speed: 8 }, false));
+      start();
+      handle.play();
+      const timer = setInterval(() => {
+        seed++;
+        start();
+      }, 12000);
+      return () => clearInterval(timer);
     },
   }),
 

@@ -1,5 +1,17 @@
 # How AI Learns (neural network) — research and implementation plan
 
+> **Status: shipped** with both views and all seven challenges, using the recommended decisions (catalog entry renamed
+> "How AI Learns" and the biology duplicate removed; a 12 000-digit MNIST subset with credit; up to 6 × 32 neurons on the
+> plane). Changes from the plan, found while building it and all covered by tests: (1) a straight-line model on XOR
+> ends near **50 %**, not 75 %: cross-entropy pulls it to "½ everywhere" (loss ln 2), so challenge 1 asks for that;
+> (2) "too big a step" uses tanh, where η = 10 leaves the circle at ≤ 60 % for every seed tested (ReLU nets just die),
+> and its goal reads accuracy instead of a 10× loss; (3) the digits measure ~88 % for the best straight line and
+> 92–94 % for one hidden layer of 128 on this subset, so challenge 7's goal is 92 %; (4) "deep and stuck" is solved
+> with tanh (six ReLU layers of 4 sometimes die); (5) the spiral has 1.25 turns and the default network is two ReLU
+> layers of 16 at η = 0.03, which untangles it for every seed tested; (6) the decision map is 160² (and 24² per neuron),
+> interpolated; (7) the gradient check uses h = 10⁻⁴ (10⁻⁵ is rounding-limited for tiny gradients); (8) the digit
+> data ship as one gzip file decompressed in the browser (`DecompressionStream`) instead of a PNG sprite.
+
 The seventh simulation: catalog id `neural-net-viz`, route `/cs/neural-net-viz`, already listed as planned ("Neural
 Network Decision Boundary"). Proposed title **"How AI Learns"** (decision 1 below). Same bar as the other six: a 64-bit
 TypeScript twin of every shader, GPU-vs-twin tests, shareable settings, measurements a test proves correct, guided
