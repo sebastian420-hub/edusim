@@ -154,13 +154,13 @@ async function waitForChange(page, reference, message, timeout = 10_000) {
 const text = async (page, selector) => (await page.locator(selector).first().textContent()) ?? "";
 
 // ───────────────────────────── home ─────────────────────────────
-await test("home: compact editorial layout — plates link to the 6 simulations, planned ones are plain text", async (page) => {
+await test("home: compact editorial layout — plates link to the 7 simulations, planned ones are plain text", async (page) => {
   await page.goto(url("/"));
   assert((await page.title()).includes("EduSim"), `title: ${await page.title()}`);
   assert((await page.locator("h1").count()) === 1, "exactly one h1");
   assert((await text(page, "h1")).includes("reach into"), "headline");
   const links = await page.locator("main a[href^='/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
-  assert(links.length === 6, `expected 6 plate links, got ${links.join(",")}`);
+  assert(links.length === 7, `expected 7 plate links, got ${links.join(",")}`);
   for (const l of await page.locator("main a").all()) assert(((await l.textContent()) ?? "").trim().length > 3, "link without text");
   assert((await page.locator("h2").count()) >= 4, "plate headings + index heading");
   for (const subject of ["Physics", "Chemistry", "Computer Science", "Biology"]) {
@@ -195,7 +195,7 @@ await test("home: the plates are one row that scrolls sideways, four at a time o
   const row = page.locator("main ul[aria-label=Simulations]");
   const box = await row.boundingBox();
   const plates = await page.locator("main ul[aria-label=Simulations] > li").evaluateAll((lis) => lis.map((li) => li.getBoundingClientRect()).map((r) => ({ left: r.left, right: r.right })));
-  assert(plates.length === 6, `${plates.length} plates`);
+  assert(plates.length === 7, `${plates.length} plates`);
   const inside = plates.filter((r) => r.left >= box.x - 1 && r.right <= box.x + box.width + 1).length;
   assert(inside === 4, `${inside} plates fully visible (want 4)`);
   assert(await row.evaluate((ul) => ul.scrollWidth > ul.clientWidth + 50), "the row should scroll");
@@ -264,7 +264,7 @@ await test("home: automated accessibility audit (axe) finds no violations, deskt
 });
 
 // ───────────────────────────── home: live plates ─────────────────────────────
-const PLATES = ["wave-interference", "n-body", "double-pendulum", "cellular-automata", "hodgkin-huxley", "axon-propagation"]; // catalog (= page) order
+const PLATES = ["wave-interference", "n-body", "double-pendulum", "cellular-automata", "neural-net-viz", "hodgkin-huxley", "axon-propagation"]; // catalog (= page) order
 const liveCanvases = (page) => page.locator("[data-testid=plate-live]");
 const waitLive = (page, id, timeout = 45_000) => page.waitForSelector(`[data-plate="${id}"] [data-testid=plate-live][data-state=ready]`, { timeout });
 /** Fraction of lit pixels in a plate's live canvas (a blank canvas would be ~0). */
@@ -1395,6 +1395,115 @@ await test("axons: challenge flow (head-on) with persistence", async (page) => {
   assert((await page.locator("text=/1 of 7 done/").count()) === 1, "completion not persisted");
 });
 
+// ───────────────────────────── how AI learns ─────────────────────────────
+const nnText = async (page, id) => (await text(page, `[data-testid=${id}]`)).trim();
+const nnPercent = async (page, id) => parseFloat(await nnText(page, id));
+/** Waits until a readout (a percentage) passes a threshold. */
+const nnUntil = (page, id, test, timeout = 90_000) =>
+  page.waitForFunction(([id, src]) => new Function("v", `return ${src}`)(parseFloat(document.querySelector(`[data-testid=${id}]`)?.textContent ?? "")), [id, test], { timeout });
+
+await test("ai: the default spiral is untangled on the GPU (90 % of unseen points), the loss falls", async (page) => {
+  await open(page, "/cs/neural-net-viz?speed=20");
+  await nnUntil(page, "nn-test-acc", "v >= 90");
+  const loss = parseFloat(await nnText(page, "nn-train-loss"));
+  assert(loss < 0.4, `training loss ${loss}`);
+  assert((await page.locator("figure svg[aria-label^='Loss during training'] path").count()) >= 2, "training and test curves");
+  assert(/Inputs/.test(await page.locator("main").innerText()) || (await page.getByText("Inputs", { exact: true }).count()) > 0, "diagram labels");
+  await shot(page, "ai-spiral");
+  await assertNoGpuProblem(page);
+});
+
+await test("ai: a straight line can't do XOR; adding a hidden layer solves it in the browser", async (page) => {
+  await open(page, "/cs/neural-net-viz?data=xor&layers=none&act=tanh&lr=0.1&speed=20");
+  await page.waitForFunction(() => parseInt((document.querySelector("[data-testid=nn-steps]")?.textContent ?? "0").replace(/,/g, ""), 10) >= 400, null, { timeout: 60_000 });
+  const line = await nnPercent(page, "nn-test-acc");
+  assert(line < 70, `a straight line got ${line} % on XOR`);
+  assert(parseFloat(await nnText(page, "nn-train-loss")) > 0.6, "the loss stays near ln 2");
+  await page.getByRole("button", { name: "+ layer" }).click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("layers") === "4");
+  await nnUntil(page, "nn-test-acc", "v >= 95");
+});
+
+await test("ai: too big a step leaves it guessing, and the step probe catches a step going uphill", async (page) => {
+  await open(page, "/cs/neural-net-viz?data=circle&layers=8&act=tanh&lr=10&speed=20");
+  await page.waitForFunction(() => parseInt((document.querySelector("[data-testid=nn-steps]")?.textContent ?? "0").replace(/,/g, ""), 10) >= 300, null, { timeout: 60_000 });
+  assert((await nnPercent(page, "nn-train-acc")) <= 60, `learning rate 10: training accuracy ${await nnText(page, "nn-train-acc")}`);
+  await page.waitForFunction(() => /uphill/.test(document.querySelector("[data-testid=nn-probe]")?.textContent ?? ""), null, { timeout: 30_000 });
+  assert((await page.locator("figure svg[aria-label^='Step probe']").count()) === 1, "step probe chart");
+});
+
+await test("ai: an all-zero start keeps every hidden neuron a clone", async (page) => {
+  await open(page, "/cs/neural-net-viz?data=xor&layers=4-4&act=tanh&init=zeros&speed=20");
+  await page.waitForFunction(() => parseInt((document.querySelector("[data-testid=nn-steps]")?.textContent ?? "0").replace(/,/g, ""), 10) >= 200, null, { timeout: 60_000 });
+  await page.waitForFunction(() => /all clones/.test(document.querySelector("[data-testid=nn-spread]")?.textContent ?? ""), null, { timeout: 10_000 });
+  assert((await nnPercent(page, "nn-test-acc")) < 65, "learnt nothing");
+  await page.getByRole("radio", { name: "Random" }).check();
+  await nnUntil(page, "nn-test-acc", "v >= 90");
+});
+
+await test("ai: handwritten digits load, train past 85 %, and the draw pad reads a drawn 1", async (page) => {
+  await open(page, "/cs/neural-net-viz?view=digits&dnet=linear&speed=20");
+  await nnUntil(page, "nn-test-acc", "v >= 85", 150_000);
+  assert((await page.locator("[data-testid=nn-confusion] tbody tr").count()) === 10, "confusion matrix");
+  const pad = page.getByLabel("Drawing pad: draw a digit from 0 to 9");
+  await pad.scrollIntoViewIfNeeded();
+  const box = await pad.boundingBox();
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.15);
+  await page.mouse.down();
+  for (let k = 0; k <= 10; k++) await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * (0.15 + 0.07 * k));
+  await page.mouse.up();
+  await page.waitForFunction(() => document.querySelector("[data-testid=nn-pad-guess]")?.textContent === "1", null, { timeout: 10_000 });
+  await page.getByRole("button", { name: "Only mistakes" }).click();
+  assert((await page.getByRole("button", { name: "Only mistakes" }).getAttribute("aria-pressed")) === "true", "mistakes toggle");
+  await shot(page, "ai-digits");
+  await assertNoGpuProblem(page);
+});
+
+await test("ai: URL state, hostile links, copy link, defaults", async (page) => {
+  await open(page, "/cs/neural-net-viz?data=xor&layers=4-2&act=tanh&lr=0.5&features=19&init=zeros&speed=3");
+  assert((await page.getByRole("button", { name: "XOR", exact: true }).getAttribute("aria-pressed")) === "true", "dataset from the link");
+  assert((await nnText(page, "nn-layer-count")) === "2 hidden layers", "layers from the link");
+  assert((await nnText(page, "nn-layer-2")) === "2 neurons", "layer width from the link");
+  assert((await page.getByRole("button", { name: "x·y", exact: true }).getAttribute("aria-pressed")) === "true", "features from the link");
+  assert(await page.getByRole("radio", { name: "All zeros" }).isChecked(), "start from the link");
+  await page.getByRole("button", { name: "Copy link" }).click();
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  assert(clip === page.url() && clip.includes("layers=4-2"), `clipboard: ${clip}`);
+  await page.getByRole("button", { name: "Defaults" }).click();
+  assert(!page.url().includes("?"), `URL not cleared: ${page.url()}`);
+  await page.goto(url("/cs/neural-net-viz?view=brain&layers=99-x&features=0&lr=1e9&act=gelu&points=-4"));
+  await page.locator("canvas").first().waitFor();
+  await page.waitForSelector("[data-testid=gpu-status][data-state=loading]", { state: "detached", timeout: 30_000 });
+  assert((await page.getByRole("button", { name: "Playground", exact: true }).getAttribute("aria-pressed")) === "true", "unknown view falls back to the playground");
+  assert((await nnText(page, "nn-layer-count")) === "2 hidden layers", "invalid layers fall back to the default");
+  await assertNoGpuProblem(page);
+});
+
+await test("ai: challenge flow (a straight line can't do XOR) with persistence", async (page) => {
+  await open(page, "/cs/neural-net-viz?speed=20");
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /A straight line can/ }).click();
+  await page.getByLabel(/coin toss/).check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("data") === "xor");
+  await page.getByRole("button", { name: "+ layer" }).click(); // the controls stay below the challenge
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 90_000 });
+  assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
+  await page.reload();
+  await page.locator("canvas").first().waitFor();
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  assert((await page.locator("text=/1 of 7 done/").count()) === 1, "completion not persisted");
+});
+
+await test("ai: phone layout — both views render, no overflow", async (page) => {
+  for (const route of ["/cs/neural-net-viz", "/cs/neural-net-viz?view=digits"]) {
+    await open(page, route);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert(overflow <= 1, `${route}: horizontal overflow ${overflow}px`);
+    await page.waitForFunction(() => /\d/.test(document.querySelector("[data-testid=nn-test-acc]")?.textContent ?? ""), null, { timeout: 60_000 });
+  }
+}, { context: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 } });
+
 // ───────────────────────────── resilience ─────────────────────────────
 await test("navigation churn: open/close each simulation 3 times without errors", async (page) => {
   for (let i = 0; i < 3; i++) {
@@ -1529,7 +1638,7 @@ await test("phone: pinching over a planet zooms instead of dragging it (n-body)"
 }, { context: PHONE });
 
 // ───────────────────────────── accessibility & polish (phase B) ─────────────────────────────
-const SIM_ROUTES = ["/physics/wave-interference", "/physics/n-body", "/physics/double-pendulum", "/cs/cellular-automata", "/biology/hodgkin-huxley", "/biology/axon-propagation"];
+const SIM_ROUTES = ["/physics/wave-interference", "/physics/n-body", "/physics/double-pendulum", "/cs/cellular-automata", "/cs/neural-net-viz", "/biology/hodgkin-huxley", "/biology/axon-propagation"];
 
 await test("a11y: every simulation page passes the axe audit, desktop and phone", async (page) => {
   const problems = [];
@@ -1569,6 +1678,7 @@ await test("a11y: each simulation describes its canvas for screen readers (polit
     "/physics/double-pendulum": /Time \d+\.\d s, angles .* flips, energy changed by/,
     "/biology/axon-propagation": /Sweep \d+\.\d of [\d.]+ ms\./,
     "/cs/cellular-automata": /Generation \d+: 36 live cells\./,
+    "/cs/neural-net-viz": /Spiral data, 2 hidden layers, \d+ steps: test accuracy [\d.]+ %/,
     "/biology/hodgkin-huxley": /fires steadily at \d+ spikes per second/,
   };
   for (const route of SIM_ROUTES) {

@@ -21,7 +21,7 @@ export default function Home() {
                 Science you can <span className="text-mut">reach into.</span>
               </h1>
               <p className="mt-5 max-w-[34ch] text-[15px] leading-normal text-mut">
-                Live models of waves, orbits, chaos, neurons and cellular life, computed on your graphics card. Change a parameter. Watch the physics answer.
+                Live models of waves, orbits, chaos, neurons, cellular life and machine learning, computed on your graphics card. Change a parameter. Watch the science answer.
               </p>
               <dl className="mt-7 hidden border-t border-hair lg:block">
                 {[

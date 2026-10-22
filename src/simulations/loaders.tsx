@@ -20,6 +20,7 @@ export const SIM_LOADERS: Record<string, ComponentType> = {
   "double-pendulum": loadSim(() => import("./physics/double-pendulum/controls")),
   "n-body": loadSim(() => import("./physics/n-body/controls")),
   "cellular-automata": loadSim(() => import("./cs/cellular-automata/controls")),
+  "neural-net-viz": loadSim(() => import("./cs/neural-net/controls")),
   "axon-propagation": loadSim(() => import("./biology/axon-propagation/controls")),
   "hodgkin-huxley": loadSim(() => import("./biology/hodgkin-huxley/controls")),
 };

@@ -24,6 +24,10 @@ import { createEngine as createAxonEngine, stimulusWeights } from "./biology/axo
 import { bareFibre, conductionVelocity, DT as CABLE_DT, extracellular, HH_TEMPERATURE, kick, lengthConstant, myelinatedFibre, restState, runFibre, scratchFor, SQUID_DIAMETER, stepCable, stimulusAt } from "./biology/axon-propagation/cable";
 import type { Fibre } from "./biology/axon-propagation/cable";
 import { DEFAULT_PARAMS, DT_MS, HISTORY_SAMPLES, REST_STATE, SAMPLE_EVERY, simulate } from "./biology/hodgkin-huxley/hh";
+import { createEngine as createNetEngine } from "./cs/neural-net/engine";
+import type { EngineData } from "./cs/neural-net/engine";
+import { batchStream, evaluate as netEvaluate, forward as netForward, features as netFeatures, gradient as netGradient, head as netHead, initParams, layout as netLayout, planeDataset, PROBE_S, rng as netRng, stepProfile, update as netUpdate, weightMask } from "./cs/neural-net/net";
+import type { Activation, Dataset, NetSpec, Optimizer } from "./cs/neural-net/net";
 
 let gpu: NodeGpu | null = null;
 
@@ -591,6 +595,160 @@ describe("Axon cable kernel vs CPU twin", () => {
     const hist = await engine.readOut(L.histOffset, 64 * fibres[0].n);
     const row = 20; // after step 200
     expect(hist[row * fibres[0].n + 150]).toBeCloseTo(kymoTwin, 1);
+    engine.dispose();
+  });
+});
+
+describe("Neural network kernels vs CPU twin", () => {
+  const featuresOf = (d: Dataset): EngineData => ({ kind: "features", n: d.n, dim: d.dim, x: d.x, y: d.y });
+  /** Random 28×28-style byte images (only the first `dim` pixels) with 10 classes. */
+  const byteData = (n: number, dim: number, seed: number) => {
+    const r = netRng(seed);
+    const bytes = Uint8Array.from({ length: n * dim }, () => (r() < 0.3 ? Math.floor(r() * 256) : 0));
+    const y = Uint8Array.from({ length: n }, () => Math.floor(r() * 10));
+    const twin: Dataset = { n, dim, nTrain: n, x: Float64Array.from(bytes, (b) => b / 255), y, classes: 10 };
+    return { gpu: { kind: "bytes", n, dim, x: bytes, y } as EngineData, twin };
+  };
+  const maxGap = (a: ArrayLike<number>, b: ArrayLike<number>) => {
+    let m = 0;
+    for (let k = 0; k < a.length; k++) m = Math.max(m, Math.abs(a[k] - b[k]));
+    return m;
+  };
+
+  /** Trains both for `steps` steps on the same batches; returns the largest parameter gap and the parameter scale. */
+  const race = async (gpu: NodeGpu, spec: NetSpec, twinData: Dataset, gpuData: EngineData, opt: Optimizer & { batch: number }, steps: number) => {
+    const lay = netLayout(spec);
+    const p = initParams(spec, 3);
+    // Non-zero biases so every path is exercised.
+    for (const L of lay.layers) for (let j = 0; j < L.nOut; j++) p[L.b + j] = 0.05 * ((j % 3) - 1);
+    const v = new Float64Array(lay.count);
+    const engine = createNetEngine(gpu, spec, gpuData, { maxBatch: opt.batch });
+    engine.load(p);
+    const stream = batchStream(twinData.nTrain, opt.batch, 5);
+    for (let k = 0; k < steps; k++) {
+      const b = stream.next();
+      engine.step(b, opt);
+      netUpdate(p, v, netGradient(spec, lay, p, twinData, b).grad, opt, weightMask(lay));
+    }
+    const gp = await engine.readParams();
+    const { velocity } = await engine.readGrads();
+    engine.dispose();
+    return { gap: maxGap(gp, p), vGap: maxGap(velocity, v), scale: Math.max(...Array.from(p, Math.abs)) };
+  };
+
+  const plane: { act: Activation; hidden: number[]; set: "circle" | "spiral" | "xor"; mask: number }[] = [
+    { act: "tanh", hidden: [5, 3], set: "circle", mask: 3 },
+    { act: "relu", hidden: [16, 16], set: "spiral", mask: 3 },
+    { act: "sigmoid", hidden: [4, 4, 4, 4, 4, 4], set: "circle", mask: 3 },
+    { act: "linear", hidden: [], set: "xor", mask: 0b10011 },
+    { act: "tanh", hidden: [7], set: "xor", mask: 127 },
+  ];
+  for (const c of plane) {
+    needsGpu(`20 training steps match the twin (${c.act}, ${JSON.stringify(c.hidden)}, ${c.set})`, async (gpu) => {
+      const d = planeDataset(c.set, 150, 0.05, 0.6, c.mask, 2);
+      const spec: NetSpec = { inputs: d.dim, hidden: c.hidden, outputs: 1, activation: c.act };
+      const r = await race(gpu, spec, d, featuresOf(d), { lr: 0.1, momentum: 0.9, l2: 1e-3, batch: 13 }, 20);
+      expect(r.gap).toBeLessThan(1e-4 * Math.max(1, r.scale));
+      expect(r.vGap).toBeLessThan(1e-4 * Math.max(1, r.scale));
+    });
+  }
+
+  needsGpu("10-class training on byte images (softmax head) matches the twin", async (gpu) => {
+    const { gpu: g, twin } = byteData(70, 64, 4);
+    const spec: NetSpec = { inputs: 64, hidden: [20], outputs: 10, activation: "relu" };
+    const r = await race(gpu, spec, twin, g, { lr: 0.05, momentum: 0.9, l2: 0, batch: 32 }, 10);
+    expect(r.gap).toBeLessThan(1e-4 * Math.max(1, r.scale));
+  });
+
+  needsGpu("evaluation: per-sample loss, correctness, guess and its probability match the twin", async (gpu) => {
+    const d = planeDataset("spiral", 130, 0, 0.5, 3, 7);
+    const spec: NetSpec = { inputs: 2, hidden: [9, 6], outputs: 1, activation: "tanh" };
+    const lay = netLayout(spec);
+    const p = initParams(spec, 1);
+    const engine = createNetEngine(gpu, spec, featuresOf(d), { maxBatch: 8 });
+    engine.load(p);
+    const out = await engine.evaluate(0, d.n);
+    for (let s = 0; s < d.n; s++) {
+      const z = netForward(spec, lay, p, d.x, s * d.dim).at(-1)!;
+      const h = netHead(z, d.y[s]);
+      expect(out[4 * s]).toBeCloseTo(h.loss, 4);
+      expect(out[4 * s + 1]).toBe(h.correct ? 1 : 0);
+      expect(out[4 * s + 2]).toBe(z[0] > 0 ? 1 : 0);
+      expect(out[4 * s + 3]).toBeCloseTo(Math.max(h.p[0], 1 - h.p[0]), 5);
+    }
+    const tr = netEvaluate(spec, lay, p, d, 0, d.n);
+    let sum = 0;
+    for (let s = 0; s < d.n; s++) sum += out[4 * s];
+    expect(sum / d.n).toBeCloseTo(tr.loss, 5);
+    engine.dispose();
+  });
+
+  needsGpu("evaluation of 10 classes on bytes matches the twin", async (gpu) => {
+    const { gpu: g, twin } = byteData(50, 128, 9);
+    const spec: NetSpec = { inputs: 128, hidden: [128], outputs: 10, activation: "relu" };
+    const lay = netLayout(spec);
+    const p = initParams(spec, 2);
+    const engine = createNetEngine(gpu, spec, g, { maxBatch: 4 });
+    engine.load(p);
+    const out = await engine.evaluate(10, 40);
+    for (let k = 0; k < 40; k++) {
+      const s = 10 + k;
+      const h = netHead(netForward(spec, lay, p, twin.x, s * 128).at(-1)!, twin.y[s]);
+      expect(out[4 * k]).toBeCloseTo(h.loss, 4);
+      expect(out[4 * k + 1]).toBe(h.correct ? 1 : 0);
+      expect(out[4 * k + 3]).toBeCloseTo(Math.max(...h.p), 5);
+    }
+    engine.dispose();
+  });
+
+  needsGpu("the step probe: the loss along the last step matches the twin's stepProfile", async (gpu) => {
+    const d = planeDataset("circle", 120, 0, 0.75, 3, 3);
+    const spec: NetSpec = { inputs: 2, hidden: [6], outputs: 1, activation: "tanh" };
+    const lay = netLayout(spec);
+    const engine = createNetEngine(gpu, spec, featuresOf(d), { maxBatch: d.nTrain });
+    engine.load(initParams(spec, 4));
+    const opt = { lr: 2, momentum: 0.5, l2: 0 };
+    const all = Uint32Array.from({ length: d.nTrain }, (_, i) => i);
+    for (let k = 0; k < 3; k++) engine.step(all, opt);
+    const p = Float64Array.from(await engine.readParams());
+    const v = Float64Array.from((await engine.readGrads()).velocity);
+    const out = await engine.evaluate(0, d.nTrain, PROBE_S, opt.lr);
+    const twin = stepProfile(spec, lay, p, v, opt.lr, d, PROBE_S);
+    PROBE_S.forEach((_, k) => {
+      let sum = 0;
+      for (let s = 0; s < d.nTrain; s++) sum += out[4 * (k * d.nTrain + s)];
+      expect(sum / d.nTrain).toBeCloseTo(twin[k], 4);
+    });
+    engine.dispose();
+  });
+
+  needsGpu("the decision map and every hidden neuron's small map match the twin", async (gpu) => {
+    const mask = 0b1111111;
+    const d = planeDataset("spiral", 40, 0, 0.5, mask, 1);
+    const spec: NetSpec = { inputs: 7, hidden: [5, 32], outputs: 1, activation: "tanh" };
+    const lay = netLayout(spec);
+    const p = initParams(spec, 8);
+    const size = 32;
+    const thumb = 8;
+    const engine = createNetEngine(gpu, spec, featuresOf(d), { maxBatch: 4, mapSize: size, thumb });
+    engine.load(p);
+    engine.drawMap(mask);
+    const map = await engine.readMap();
+    expect(map.length).toBe(size * size + 37 * thumb * thumb);
+    const at = (cell: number, side: number) => [((cell % side) + 0.5) / side * 2 - 1, 1 - (Math.floor(cell / side) + 0.5) / side * 2];
+    for (let cell = 0; cell < size * size; cell += 7) {
+      const [x, y] = at(cell, size);
+      const z = netForward(spec, lay, p, netFeatures(mask, x, y)).at(-1)![0];
+      expect(map[cell]).toBeCloseTo(1 / (1 + Math.exp(-z)), 5);
+    }
+    for (let neuron = 0; neuron < 37; neuron += 3) {
+      for (let cell = 0; cell < thumb * thumb; cell += 5) {
+        const [x, y] = at(cell, thumb);
+        const acts = netForward(spec, lay, p, netFeatures(mask, x, y));
+        const value = neuron < 5 ? acts[0][neuron] : acts[1][neuron - 5];
+        expect(map[size * size + neuron * thumb * thumb + cell]).toBeCloseTo(value, 5);
+      }
+    }
     engine.dispose();
   });
 });

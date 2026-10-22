@@ -11,6 +11,7 @@ Built with Next.js 16 (App Router, Turbopack), React 19, Tailwind 4 and [vgpu](h
 | Axons & Nerves | Biology | Hodgkin–Huxley cables, one GPU invocation per fibre solving its tridiagonal system implicitly (Thomas algorithm); a nerve of up to 1 000 fibres and its compound action potential |
 | Hodgkin–Huxley Neuron | Biology | Compute shader integrates the ODEs; fragment shader plots the traces |
 | Cellular Automata | Computer Science | Ping-pong compute shader over grids up to 2048²; a reduction shader counts and fingerprints every generation; pan/zoom renderer |
+| How AI Learns | Computer Science | A neural network trained on the GPU: forward, backpropagation, gradient and momentum-SGD kernels over the whole mini-batch (deterministic, no atomics); a live decision map and every neuron's own map; real handwritten digits (MNIST) with a draw pad |
 
 The catalog in `src/lib/subjects.ts` lists many more planned simulations (marked "Coming Soon").
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the improvement plan.
@@ -38,7 +39,7 @@ explanatory message instead of a blank canvas.
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
 | `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
-| `pnpm e2e` | Full browser suite (78 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
+| `pnpm e2e` | Full browser suite (86 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
 | `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
 | `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
@@ -116,6 +117,16 @@ src/
   storage buffers in all, within compatibility-mode limits); `cap.wgsl` sums the signals into the compound action
   potential. Tested: HH 1952's 18.8 m/s (within 2 %), √d for bare and ∝ d for myelinated fibres, annihilation,
   refractoriness, TTX/lidocaine and demyelination block, heat block.
+- **How AI Learns:** `net.ts` is the 64-bit twin (layout, activations, cross-entropy, backpropagation checked against
+  centred finite differences, momentum SGD with L2, seeded initialisation, the datasets and the batch order, the step
+  probe). `mlp.wgsl` trains one mini-batch step as a fixed sequence of dispatches (a forward pass per hidden layer, the
+  output layer with its softmax or sigmoid, a backward pass per hidden layer, one gradient and one update over every
+  parameter); every sum runs in a fixed order, so 20 GPU steps match 20 twin steps on the same batches. `eval.wgsl`
+  evaluates thousands of samples at once in private memory, also along the last step (w + (s − 1)·(−η·v), which is the
+  step probe); `boundary.wgsl` computes the decision map and each hidden neuron's map into a buffer that
+  `playground.wgsl` draws; the weights reach `links.wgsl` as a vertex buffer copied layer by layer. The digits are a
+  10 000 + 2 000 subset of MNIST (Yann LeCun, Corinna Cortes, Christopher Burges; CC BY-SA 3.0), built by
+  `scripts/build-digits.mjs` into `public/data/mnist-12k.dat` (gzip, 1.9 MB) and stored on the GPU four pixels per word.
 - **Cellular automata measurement:** `count.wgsl` reduces the grid to a live-cell count and an order-independent
   fingerprint every generation (into a 1024-slot ring buffer); `sim.ts` reads it back at most every 100 ms and
   `tracker.ts` classifies the history (extinct / still life / oscillator with period / moving pattern). It only runs

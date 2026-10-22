@@ -78,6 +78,17 @@ const POSTERS = [
     },
   },
   {
+    id: "neural-net-viz",
+    route: "/cs/neural-net-viz?speed=20&seed=3",
+    focus: { x: 0.5, y: 0.5 },
+    async prepare(page) {
+      // The default spiral, untangled: the decision map above the network diagram.
+      await page.waitForFunction(() => parseFloat(document.querySelector("[data-testid=nn-test-acc]")?.textContent ?? "0") >= 97, null, { timeout: 240_000 });
+      await page.getByRole("button", { name: "Pause", exact: true }).click();
+      await wait(1500);
+    },
+  },
+  {
     id: "cellular-automata",
     route: "/cs/cellular-automata",
     focus: { x: 0.5, y: 0.5 },
@@ -178,10 +189,10 @@ await withServer(
           <div style="width:360px;flex:none">
             <div style="font:500 14px var(--font-geist-mono),monospace;letter-spacing:.14em;color:#5eead4;text-transform:uppercase;margin-bottom:22px">Interactive · GPU-computed</div>
             <div style="font-size:54px;line-height:1.04;font-weight:500;letter-spacing:-.035em">Science you can <span style="color:#939bab">reach into.</span></div>
-            <div style="margin-top:26px;font-size:18px;line-height:1.45;color:#939bab">Live models of waves, orbits, chaos, neurons and cellular life, computed on your graphics card.</div>
+            <div style="margin-top:26px;font-size:18px;line-height:1.45;color:#939bab">Live models of waves, orbits, chaos, neurons, cellular life and machine learning, computed on your graphics card.</div>
             <div style="margin-top:34px;font:500 22px var(--font-geist-sans),sans-serif;letter-spacing:-.01em">EduSim</div>
           </div>
-          <div style="display:flex;gap:12px">${images.map((src) => `<img src="${src}" style="width:${images.length > 5 ? 104 : images.length > 4 ? 128 : images.length > 3 ? 168 : 214}px;height:${images.length > 5 ? 114 : images.length > 4 ? 141 : images.length > 3 ? 185 : 235}px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
+          <div style="display:flex;gap:12px">${images.map((src) => `<img src="${src}" style="width:${images.length > 6 ? 88 : images.length > 5 ? 104 : images.length > 4 ? 128 : images.length > 3 ? 168 : 214}px;height:${images.length > 6 ? 97 : images.length > 5 ? 114 : images.length > 4 ? 141 : images.length > 3 ? 185 : 235}px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
         </div>`;
       document.body.style.margin = "0";
     }, dataUrls);
