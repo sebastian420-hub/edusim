@@ -132,6 +132,8 @@ Recommended order, each chosen to reuse what exists and to showcase the GPU:
 4. **A brain on the GPU** (medium–hard): ✅ *Axons & Nerves* (HH cable, myelin, a nerve of a thousand fibres and
    its compound action potential, 7 challenges); next *Brain Rhythms* (up to 100 000 spiking neurons, rhythms,
    cortical waves). Plan in [`BRAIN-PLAN.md`](BRAIN-PLAN.md).
+5. **How AI Learns** (medium–hard): a neural network trained live on the GPU — decision map, step-size probe, overfitting,
+   and handwritten digits with a draw pad; 7 challenges. Plan in [`NEURAL-NETWORK-PLAN.md`](NEURAL-NETWORK-PLAN.md).
 
 Each one ships with the full foundation checklist: shader validation, TS twin + tests, smoke test,
 explanation text, at least one measurement tool and a few challenges.
