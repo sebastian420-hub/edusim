@@ -135,6 +135,9 @@ Recommended order, each chosen to reuse what exists and to showcase the GPU:
 5. ✅ **How AI Learns** (medium–hard): a neural network trained live on the GPU — Playground (decision map, every
    neuron's map, loss curves, step probe, gradient by layer) and Digits (MNIST subset, templates, confusion matrix, draw
    pad); 7 challenges. See [`NEURAL-NETWORK-PLAN.md`](NEURAL-NETWORK-PLAN.md).
+6. **How AI Writes** (hard): a tiny language model trained live on the GPU, letter by letter — count tables against
+   learning, temperature, memorisation, induction heads (in-context copying) and a human-versus-model Shannon game;
+   7 challenges. Plan in [`LANGUAGE-MODEL-PLAN.md`](LANGUAGE-MODEL-PLAN.md).
 
 Each one ships with the full foundation checklist: shader validation, TS twin + tests, smoke test,
 explanation text, at least one measurement tool and a few challenges.
