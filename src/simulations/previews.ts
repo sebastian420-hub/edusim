@@ -21,6 +21,9 @@ import { createNeuralNet } from "./cs/neural-net/sim";
 import type { NetHandle } from "./cs/neural-net/sim";
 import { NET_DEFAULTS, netConfigOf } from "./cs/neural-net/settings";
 import type { WaveHandle } from "./physics/wave-interference/sim";
+import { createLanguageModel } from "./cs/language-model/sim";
+import type { LmHandle } from "./cs/language-model/sim";
+import { LM_DEFAULTS, lmConfigOf } from "./cs/language-model/settings";
 
 export interface Preview {
   factory: SimFactory<SimHandle>;
@@ -85,6 +88,15 @@ export const PREVIEWS: Record<string, Preview> = {
         start();
       }, 12000);
       return () => clearInterval(timer);
+    },
+  }),
+
+  "language-model": define<LmHandle>({
+    factory: (ctx) => createLanguageModel(ctx),
+    setup(handle) {
+      // The default transformer learning Shakespeare from scratch, writing as it goes.
+      handle.configure(lmConfigOf(LM_DEFAULTS));
+      handle.play();
     },
   }),
 

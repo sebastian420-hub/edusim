@@ -21,6 +21,7 @@ export const SIM_LOADERS: Record<string, ComponentType> = {
   "n-body": loadSim(() => import("./physics/n-body/controls")),
   "cellular-automata": loadSim(() => import("./cs/cellular-automata/controls")),
   "neural-net-viz": loadSim(() => import("./cs/neural-net/controls")),
+  "language-model": loadSim(() => import("./cs/language-model/controls")),
   "axon-propagation": loadSim(() => import("./biology/axon-propagation/controls")),
   "hodgkin-huxley": loadSim(() => import("./biology/hodgkin-huxley/controls")),
 };
