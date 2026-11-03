@@ -12,6 +12,7 @@ Built with Next.js 16 (App Router, Turbopack), React 19, Tailwind 4 and [vgpu](h
 | Hodgkin–Huxley Neuron | Biology | Compute shader integrates the ODEs; fragment shader plots the traces |
 | Cellular Automata | Computer Science | Ping-pong compute shader over grids up to 2048²; a reduction shader counts and fingerprints every generation; pan/zoom renderer |
 | How AI Learns | Computer Science | A neural network trained on the GPU: forward, backpropagation, gradient and momentum-SGD kernels over the whole mini-batch (deterministic, no atomics); a live decision map and every neuron's own map; real handwritten digits (MNIST) with a draw pad |
+| How AI Writes | Computer Science | A character-level language model (neural bigram, MLP or a small GPT) trained on the GPU with AdamW, a whole step in one command buffer; it writes as it learns, shows its attention, races exact count tables, and plays Shannon's guessing game against you |
 
 The catalog in `src/lib/subjects.ts` lists many more planned simulations (marked "Coming Soon").
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the improvement plan.
@@ -36,10 +37,11 @@ explanatory message instead of a blank canvas.
 | `pnpm lint` | ESLint |
 | `pnpm typecheck` | `next typegen` (route types) + `tsc --noEmit` |
 | `pnpm test` | Vitest: pure logic **and** headless-GPU tests of every shader |
+| `pnpm test:lm-slow` | The *How AI Writes* challenge claims that need real training (names, temperature, the sonnet, the copying game), on the headless GPU: about an hour on the software renderer, so not part of `pnpm test` |
 | `pnpm check:wgsl` | Validates every `.wgsl` file against a real WebGPU device (`next build` does not) |
 | `pnpm build` | Production build (all simulation routes are statically generated) |
 | `pnpm smoke` | Browser smoke test of a running server (`BASE_URL=http://localhost:3000`) |
-| `pnpm e2e` | Full browser suite (86 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches |
+| `pnpm e2e` | Full browser suite (94 scenarios: every sim, URL state, measurement tools, challenges, shortcuts, no-WebGPU, phone) against `BASE_URL`. Works on `pnpm start`, `pnpm dev` with `E2E_DEV=1` (React strict mode; skips size budgets) and a static export. `E2E_GREP=<regex>` runs only the scenarios whose name matches; `E2E_CHROMIUM=<path>` uses another Chromium build |
 | `pnpm smoke:local` | Builds, serves on a spare port, runs the smoke test, stops the server |
 | `pnpm export` | Fully static offline build in `out/` — serve with any static file server, no Node or internet |
 | `pnpm verify` | lint → typecheck → test → check:wgsl → build |
@@ -127,6 +129,18 @@ src/
   `playground.wgsl` draws; the weights reach `links.wgsl` as a vertex buffer copied layer by layer. The digits are a
   10 000 + 2 000 subset of MNIST (Yann LeCun, Corinna Cortes, Christopher Burges; CC BY-SA 3.0), built by
   `scripts/build-digits.mjs` into `public/data/mnist-12k.dat` (gzip, 1.9 MB) and stored on the GPU four pixels per word.
+- **How AI Writes:** each model is written once, as a list of op records (`model.ts`: shapes, offsets, flags) that
+  both backends run over the same four buffers (weights; activations and their gradients; gradient and Adam's moments;
+  the text, writing lines and window starts). `lm.wgsl` has one kernel per op kind (embeddings, layer norm, a tiled
+  32 × 32 matrix product with transposes, bias and residual, GELU and tanh, causal attention and its backward pass as
+  gathers, cross-entropy, a fixed-order gradient norm, AdamW, sampling with a hashed random number); `cpu.ts` is the
+  64-bit port of every kernel, so each kernel, 20 full training steps, evaluation, attention and writing are checked
+  against it, and the backward pass against centred finite differences. vgpu submits each dispatch on its own, so
+  `engine.ts` drives WebGPU directly: one explicit bind group layout and the op records in a uniform buffer read at
+  dynamic offsets, which makes a transformer step (60–110 kernels) one command buffer. Writing runs on the GPU too:
+  each letter is a forward pass, a sample and a counter increment, so many letters go by without a read-back. Count
+  tables are exact and counted in a Web Worker (`ngram.worker.ts`). Texts: tiny Shakespeare and the makemore names,
+  gzipped by `scripts/build-texts.mjs` into `public/data/`.
 - **Cellular automata measurement:** `count.wgsl` reduces the grid to a live-cell count and an order-independent
   fingerprint every generation (into a 1024-slot ring buffer); `sim.ts` reads it back at most every 100 ms and
   `tracker.ts` classifies the history (extinct / still life / oscillator with period / moving pattern). It only runs

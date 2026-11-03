@@ -1,3 +1,9 @@
+export interface ChartLevel {
+  y: number;
+  label: string;
+  color?: string;
+}
+
 export interface ChartMarker {
   x: number;
   label?: string;
@@ -26,6 +32,8 @@ interface MiniChartProps {
   yMin?: number;
   /** Measured points drawn as dots (a scatter on top of, or instead of, the line). */
   points?: { x: number; y: number }[];
+  /** Horizontal reference lines (dashed), labelled at their left end. */
+  levels?: ChartLevel[];
   /** Tick label formatting (default: rounded to an integer). */
   format?: (value: number) => string;
   /** Text alternative for screen readers. */
@@ -38,7 +46,7 @@ const H = 150;
 const PAD = { left: 38, right: 10, top: 10, bottom: 30 };
 
 /** Small dependency-free SVG line chart with axes, vertical markers and one highlighted point. */
-export function MiniChart({ title, xLabel, yLabel, x, y, y2, labels, markers = [], point, yMax, yMin = 0, xMin: xLow, xMax: xHigh, points = [], format = (v) => String(Math.round(v)), summary, className = "" }: MiniChartProps) {
+export function MiniChart({ title, xLabel, yLabel, x, y, y2, labels, markers = [], point, yMax, yMin = 0, xMin: xLow, xMax: xHigh, points = [], levels = [], format = (v) => String(Math.round(v)), summary, className = "" }: MiniChartProps) {
   const xMin = xLow ?? Math.min(...x);
   const xMax = xHigh ?? Math.max(...x);
   const yTop = yMax ?? Math.max(1, ...y);
@@ -82,6 +90,16 @@ export function MiniChart({ title, xLabel, yLabel, x, y, y2, labels, markers = [
             )}
           </g>
         ))}
+        {levels
+          .filter((l) => l.y >= yMin && l.y <= yTop)
+          .map((l) => (
+            <g key={`level-${l.label}`}>
+              <line x1={PAD.left} x2={W - PAD.right} y1={sy(l.y)} y2={sy(l.y)} stroke={l.color ?? "#94a3b8"} strokeWidth={0.9} strokeDasharray="4 3" />
+              <text x={PAD.left + 3} y={sy(l.y) - 2.5} fontSize={8} fill={l.color ?? "#94a3b8"}>
+                {l.label}
+              </text>
+            </g>
+          ))}
         {x.length > 1 && y2 && <path d={pathOf(y2)} fill="none" stroke="#f472b6" strokeWidth={1.5} />}
         {x.length > 1 && <path d={path} fill="none" stroke="#34d399" strokeWidth={1.75} />}
         {y2 && labels && (

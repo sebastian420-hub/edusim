@@ -25,6 +25,8 @@ const url = (p) => `${BASE_URL}${p}`;
 
 const browser = await chromium.launch({
   channel: "chromium", // full Chromium: the old headless shell cannot run vgpu's pipelines
+  // E2E_CHROMIUM=<path> uses a Chromium installed elsewhere (one that does not match playwright-core's own build).
+  ...(process.env.E2E_CHROMIUM ? { executablePath: process.env.E2E_CHROMIUM } : {}),
   args: [
     "--no-sandbox",
     "--enable-unsafe-webgpu",
@@ -154,13 +156,13 @@ async function waitForChange(page, reference, message, timeout = 10_000) {
 const text = async (page, selector) => (await page.locator(selector).first().textContent()) ?? "";
 
 // ───────────────────────────── home ─────────────────────────────
-await test("home: compact editorial layout — plates link to the 7 simulations, planned ones are plain text", async (page) => {
+await test("home: compact editorial layout — plates link to the 8 simulations, planned ones are plain text", async (page) => {
   await page.goto(url("/"));
   assert((await page.title()).includes("EduSim"), `title: ${await page.title()}`);
   assert((await page.locator("h1").count()) === 1, "exactly one h1");
   assert((await text(page, "h1")).includes("reach into"), "headline");
   const links = await page.locator("main a[href^='/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
-  assert(links.length === 7, `expected 7 plate links, got ${links.join(",")}`);
+  assert(links.length === 8, `expected 8 plate links, got ${links.join(",")}`);
   for (const l of await page.locator("main a").all()) assert(((await l.textContent()) ?? "").trim().length > 3, "link without text");
   assert((await page.locator("h2").count()) >= 4, "plate headings + index heading");
   for (const subject of ["Physics", "Chemistry", "Computer Science", "Biology"]) {
@@ -195,7 +197,7 @@ await test("home: the plates are one row that scrolls sideways, four at a time o
   const row = page.locator("main ul[aria-label=Simulations]");
   const box = await row.boundingBox();
   const plates = await page.locator("main ul[aria-label=Simulations] > li").evaluateAll((lis) => lis.map((li) => li.getBoundingClientRect()).map((r) => ({ left: r.left, right: r.right })));
-  assert(plates.length === 7, `${plates.length} plates`);
+  assert(plates.length === 8, `${plates.length} plates`);
   const inside = plates.filter((r) => r.left >= box.x - 1 && r.right <= box.x + box.width + 1).length;
   assert(inside === 4, `${inside} plates fully visible (want 4)`);
   assert(await row.evaluate((ul) => ul.scrollWidth > ul.clientWidth + 50), "the row should scroll");
@@ -264,7 +266,7 @@ await test("home: automated accessibility audit (axe) finds no violations, deskt
 });
 
 // ───────────────────────────── home: live plates ─────────────────────────────
-const PLATES = ["wave-interference", "n-body", "double-pendulum", "cellular-automata", "neural-net-viz", "hodgkin-huxley", "axon-propagation"]; // catalog (= page) order
+const PLATES = ["wave-interference", "n-body", "double-pendulum", "cellular-automata", "neural-net-viz", "language-model", "hodgkin-huxley", "axon-propagation"]; // catalog (= page) order
 const liveCanvases = (page) => page.locator("[data-testid=plate-live]");
 const waitLive = (page, id, timeout = 45_000) => page.waitForSelector(`[data-plate="${id}"] [data-testid=plate-live][data-state=ready]`, { timeout });
 /** Fraction of lit pixels in a plate's live canvas (a blank canvas would be ~0). */
@@ -281,7 +283,7 @@ const litFraction = (page, id) =>
     return lit / (bitmap.width * bitmap.height);
   }, id);
 
-await test("home plates: hover runs the real simulation (all six), one at a time, and leaving restores the poster", async (page) => {
+await test("home plates: hover runs the real simulation (every one), one at a time, and leaving restores the poster", async (page) => {
   await page.goto(url("/"));
   assert((await liveCanvases(page).count()) === 0, "no live canvas before any intent");
   for (const id of PLATES) {
@@ -1504,6 +1506,150 @@ await test("ai: phone layout — both views render, no overflow", async (page) =
   }
 }, { context: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 } });
 
+// ───────────────────────────── how AI writes ─────────────────────────────
+// The browser's software GPU is slow, so these run small models; the full-size ones are checked headlessly.
+const TINY = "layers=1&width=32&heads=2&ctx=16&batch=8";
+const lmText = async (page, id) => (await text(page, `[data-testid=${id}]`)).trim();
+const lmUntil = (page, id, test, timeout = 90_000) =>
+  page.waitForFunction(([id, src]) => new Function("v", "t", `return ${src}`)(parseFloat((document.querySelector(`[data-testid=${id}]`)?.textContent ?? "").replace(/,/g, "")), document.querySelector(`[data-testid=${id}]`)?.textContent ?? ""), [id, test], { timeout });
+
+await test("write: the neural bigram trains in the browser, from guessing (4.17) down past letter frequencies", async (page) => {
+  // Small, fixed steps: a software GPU draws a frame in about a second.
+  await open(page, "/cs/language-model?model=bigram&lr=0.05&ctx=16&batch=8&speed=8");
+  await lmUntil(page, "lm-held-loss", "v > 0", 60_000);
+  const first = parseFloat(await lmText(page, "lm-held-loss"));
+  assert(first > 3.5, `an untrained bigram should be near ln 65 = 4.17, got ${first}`);
+  assert((await lmText(page, "lm-params")).startsWith("4,225"), `65 × 65 scores: ${await lmText(page, "lm-params")}`);
+  await lmUntil(page, "lm-held-loss", "v < 3.3", 240_000); // letter frequencies alone: 3.35
+  assert((await page.locator("figure svg[aria-label^='Loss (surprise per letter'] path").count()) >= 2, "training and unseen curves");
+  // The reference lines come from count tables on the same letters.
+  await page.waitForFunction(() => document.querySelectorAll("figure svg[aria-label^='Loss (surprise per letter'] text").length > 0 && /previous letter/.test(document.querySelector("figure svg[aria-label^='Loss (surprise per letter']")?.textContent ?? ""), null, { timeout: 60_000 });
+  await shot(page, "write-bigram");
+  await assertNoGpuProblem(page);
+});
+
+await test("write: a tiny transformer writes as it trains; at temperature 0 it repeats itself", async (page) => {
+  await open(page, `/cs/language-model?${TINY}`);
+  await lmUntil(page, "lm-written", "v >= 20", 120_000);
+  await slider(page, "Temperature (0 = always the likeliest letter)").fill("0");
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("temp") === "0");
+  await lmUntil(page, "lm-written", "v >= 120", 240_000);
+  const rep = parseFloat(await lmText(page, "lm-repetition"));
+  assert(rep >= 30, `at temperature 0 the writing should loop, repetition ${rep} %`);
+  assert(/nats\/letter/.test(await lmText(page, "lm-own-surprise")), "its own surprise is measured");
+  await shot(page, "write-train");
+  await assertNoGpuProblem(page);
+});
+
+await test("write: Predict shows next-letter probabilities; a click appends, writing continues the prompt", async (page) => {
+  await open(page, `/cs/language-model?view=predict&${TINY}`);
+  await page.waitForSelector("[data-testid=lm-bars] button", { timeout: 60_000 });
+  const bars = await page.locator("[data-testid=lm-bars] button").count();
+  assert(bars === 12, `${bars} bars`);
+  const percents = await page.locator("[data-testid=lm-bars] button").evaluateAll((bs) => bs.map((b) => parseFloat(b.textContent.match(/([\d.]+) %/)[1])));
+  assert(percents.every((p, i) => i === 0 || p <= percents[i - 1]), `bars not sorted: ${percents}`);
+  const prompt = page.getByTestId("lm-prompt");
+  const before = await prompt.inputValue();
+  await page.locator("[data-testid=lm-bars] button").first().click();
+  assert((await prompt.inputValue()).length === before.length + 1, "clicking a bar appends its letter");
+  await page.getByTestId("lm-write-on").click();
+  await page.waitForFunction((n) => document.querySelector("[data-testid=lm-prompt]").value.length >= n + 21, before.length, { timeout: 180_000 });
+  await page.getByRole("button", { name: "Stop" }).click();
+  assert(await page.getByLabel(/^Head\d/).isVisible(), "a transformer's heads can be chosen");
+  await shot(page, "write-predict");
+  await assertNoGpuProblem(page);
+});
+
+await test("write: count tables of Shakespeare are best at 4 letters and worse beyond (exact)", async (page) => {
+  await open(page, `/cs/language-model?view=tables&${TINY}`);
+  const loss = async (k) => {
+    await page.getByRole("group", { name: "Letters of context" }).getByRole("button", { name: String(k), exact: true }).click();
+    await page.waitForFunction(() => /^\d/.test(document.querySelector("[data-testid=lm-table-held]")?.textContent ?? ""), null, { timeout: 60_000 });
+    return parseFloat(await lmText(page, "lm-table-held"));
+  };
+  const held = [];
+  for (let k = 0; k <= 6; k++) held.push(await loss(k));
+  assert(held.indexOf(Math.min(...held)) === 4, `best context ${held.indexOf(Math.min(...held))}: ${held}`);
+  assert(Math.abs(held[4] - 1.75) < 0.001 && Math.abs(held[1] - 2.482) < 0.001, `the measured ladder: ${held}`);
+  assert(held[6] > held[5] && held[5] > held[4], "memorising beyond 4 letters");
+  await page.waitForFunction(() => /Best on unseen text: 4 letters/.test(document.body.innerText), null, { timeout: 10_000 });
+  await shot(page, "write-tables");
+});
+
+await test("write: Shannon's game takes 50 guesses and scores you against the model", async (page) => {
+  await open(page, `/cs/language-model?view=shannon&${TINY}`);
+  const box = page.getByTestId("lm-guess");
+  await page.waitForSelector("[data-testid=lm-guess]:not([disabled])", { timeout: 60_000 });
+  await box.type("e");
+  await box.type("e"); // the same wrong guess twice is not counted twice
+  await page.waitForFunction(() => /already tried|^Letter 2/.test(document.body.innerText) || /Letter 2 of 50/.test(document.querySelector("[data-testid=lm-shannon-progress]")?.textContent ?? ""), null, { timeout: 5000 });
+  for (let k = 0; k < 50; k++) {
+    const show = page.getByRole("button", { name: /^Show it/ });
+    if (await show.isDisabled()) break;
+    await show.click();
+  }
+  await page.waitForFunction(() => /–/.test(document.querySelector("[data-testid=lm-shannon-you]")?.textContent ?? ""), null, { timeout: 10_000 });
+  await page.waitForFunction(() => /\d – \d/.test(document.querySelector("[data-testid=lm-shannon-model]")?.textContent ?? ""), null, { timeout: 240_000 });
+  assert(await page.getByTestId("lm-shannon-verdict").isVisible(), "verdict");
+  await shot(page, "write-shannon");
+});
+
+await test("write: URL state, hostile links, your own text stays in the browser", async (page) => {
+  await open(page, "/cs/language-model?view=predict&text=names&model=mlp&k=5&hidden=256&ctx=32&lr=0.01&temp=0.4");
+  assert((await page.getByLabel("Text to learn").inputValue()) === "names", "text from the link");
+  assert(await page.getByRole("radio", { name: /MLP/ }).isChecked(), "model from the link");
+  assert((await slider(page, "Letters of context").inputValue()) === "5", "context from the link");
+  await page.goto(url("/cs/language-model?view=brain&text=../../etc&model=gpt5&layers=99&heads=3&width=7&ctx=1e9&lr=-1&temp=nan&tk=12&batch=8"));
+  await page.locator("canvas").first().waitFor();
+  await page.waitForSelector("[data-testid=gpu-status][data-state=loading]", { state: "detached", timeout: 30_000 });
+  assert((await page.getByRole("button", { name: "Train", exact: true }).getAttribute("aria-pressed")) === "true", "unknown view falls back to Train");
+  assert((await page.getByLabel("Text to learn").inputValue()) === "shakespeare", "unknown text falls back to Shakespeare");
+  assert((await slider(page, "Layers").inputValue()) === "4", "layers are clamped");
+  await assertNoGpuProblem(page);
+  // Your own text: learnt from, kept in localStorage, never put in the link.
+  // Paused (a four-layer model is heavy for a software GPU); forced clicks need no animation frames.
+  await page.getByRole("button", { name: "Pause", exact: true }).click({ force: true });
+  await page.getByLabel("Text to learn").selectOption("own");
+  const mine = "The quick brown fox jumps over the lazy dog. ".repeat(20);
+  await page.getByLabel("Your own text").fill(mine);
+  await page.getByRole("button", { name: "Learn this text" }).click({ force: true });
+  await page.waitForFunction(() => /\d/.test(document.querySelector("[data-testid=lm-params]")?.textContent ?? ""), null, { timeout: 60_000 });
+  assert(!page.url().includes("quick"), `the text leaked into the URL: ${page.url()}`);
+  assert((await page.evaluate(() => localStorage.getItem("edusim:language-model:own-text"))) === mine, "kept in this browser");
+  await page.getByRole("button", { name: "Defaults" }).click({ force: true });
+  assert(!page.url().includes("?"), `URL not cleared: ${page.url()}`);
+});
+
+await test("write: challenge flow (count tables memorise) with persistence", async (page) => {
+  await open(page, `/cs/language-model?${TINY}`);
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  await page.getByRole("button", { name: /More context, until it memorises/ }).click();
+  await page.getByLabel(/falls, then rises/).check();
+  await page.getByRole("button", { name: /Lock in/ }).click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("view") === "tables");
+  for (const k of ["6", "4"]) {
+    await page.getByRole("group", { name: "Letters of context" }).getByRole("button", { name: k, exact: true }).click();
+    await page.waitForTimeout(300);
+  }
+  await page.waitForSelector("[role=status]:has-text('Goal') >> text=✓", { timeout: 90_000 });
+  assert(await page.locator("text=Your prediction was right.").isVisible(), "no feedback");
+  await page.reload();
+  await page.locator("canvas").first().waitFor();
+  await page.getByRole("tab", { name: "Challenges" }).click();
+  assert((await page.locator("text=/1 of 7 done/").count()) === 1, "completion not persisted");
+});
+
+await test("write: phone layout — all four views render, no overflow", async (page) => {
+  for (const v of ["train", "predict", "tables", "shannon"]) {
+    await open(page, `/cs/language-model?view=${v}&${TINY}`);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert(overflow <= 1, `${v}: horizontal overflow ${overflow}px`);
+    const h = (await page.locator("canvas").first().boundingBox()).height;
+    assert(h >= 200, `${v}: canvas only ${h}px tall`);
+  }
+  await shot(page, "write-phone");
+}, { context: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 } });
+
 // ───────────────────────────── resilience ─────────────────────────────
 await test("navigation churn: open/close each simulation 3 times without errors", async (page) => {
   for (let i = 0; i < 3; i++) {
@@ -1638,7 +1784,10 @@ await test("phone: pinching over a planet zooms instead of dragging it (n-body)"
 }, { context: PHONE });
 
 // ───────────────────────────── accessibility & polish (phase B) ─────────────────────────────
-const SIM_ROUTES = ["/physics/wave-interference", "/physics/n-body", "/physics/double-pendulum", "/cs/cellular-automata", "/cs/neural-net-viz", "/biology/hodgkin-huxley", "/biology/axon-propagation"];
+// The language model with a small transformer: the default one takes seconds a step on a software GPU, which holds up
+// navigation to the next page (on real GPUs a step takes milliseconds).
+const LM_ROUTE = "/cs/language-model?layers=1&width=32&heads=2&ctx=16&batch=8";
+const SIM_ROUTES = ["/physics/wave-interference", "/physics/n-body", "/physics/double-pendulum", "/cs/cellular-automata", "/cs/neural-net-viz", LM_ROUTE, "/biology/hodgkin-huxley", "/biology/axon-propagation"];
 
 await test("a11y: every simulation page passes the axe audit, desktop and phone", async (page) => {
   const problems = [];
@@ -1679,6 +1828,7 @@ await test("a11y: each simulation describes its canvas for screen readers (polit
     "/biology/axon-propagation": /Sweep \d+\.\d of [\d.]+ ms\./,
     "/cs/cellular-automata": /Generation \d+: 36 live cells\./,
     "/cs/neural-net-viz": /Spiral data, 2 hidden layers, \d+ steps: test accuracy [\d.]+ %/,
+    [LM_ROUTE]: /Shakespeare \(1\.1 M letters\), \d+ steps: unseen-text loss (—|[\d.]+) nats per letter/,
     "/biology/hodgkin-huxley": /fires steadily at \d+ spikes per second/,
   };
   for (const route of SIM_ROUTES) {

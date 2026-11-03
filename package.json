@@ -16,7 +16,8 @@
     "smoke:local": "node scripts/smoke-local.mjs",
     "export": "EXPORT=1 next build",
     "e2e": "node scripts/e2e.mjs",
-    "posters": "node scripts/make-posters.mjs"
+    "posters": "node scripts/make-posters.mjs",
+    "test:lm-slow": "LM_SLOW=1 vitest run src/simulations/cs/language-model/challenges.slow.test.ts"
   },
   "dependencies": {
     "next": "16.3.8",

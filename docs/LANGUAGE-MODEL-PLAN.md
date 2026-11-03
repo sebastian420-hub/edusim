@@ -1,5 +1,41 @@
 # How AI Writes (a tiny language model) — research and implementation plan
 
+> **Status: shipped** with all four views and seven challenges, using the recommended decisions (the title and place,
+> the four texts, characters plus a tokens panel, 2 × 64 and 4 × 128 transformers, the full v1 scope). How it was
+> built, and what changed from the plan, all covered by tests:
+> (1) each model is one list of op records run unchanged by the GPU (`lm.wgsl`) and by a 64-bit port of every kernel
+> (`cpu.ts`), so every kernel, 20 training steps, evaluation, attention and writing are compared with the twin, and
+> backpropagation through every op with centred differences (relative error < 10⁻⁶);
+> (2) vgpu submits each dispatch separately, so the engine drives WebGPU directly: one explicit layout, the op records
+> at dynamic uniform offsets, a whole step (60–110 kernels) in one command buffer;
+> (3) writing runs on the GPU (forward pass, sample, counter) and records the model's own surprise at each letter;
+> (4) the count-table numbers of §5 are reproduced exactly by a test, and the chart's reference lines are the tables'
+> losses on the very letters the model is measured on;
+> (5) the neural bigram reaches the count table (within 0.02 nats on the same letters) in 400 steps at η = 0.05;
+> (6) names: the best table looks 3 letters back (2.133 nats), and the 2 × 64 transformer passes it on the same unseen
+> names within 2 500 steps;
+> (7) Sonnet 18 is learnt by heart by the default transformer (no bigger one needed): it writes runs of 80 letters or
+> more verbatim within 500 steps at temperature 0.5;
+> (8) at temperature 0 a trained model loops (Shakespeare: “the the the”, names: “alinna” over and over, 77–96 % of
+> 8-letter runs repeated); at 2 its own surprise at its writing climbs towards the guessing line (Shakespeare 3.6 nats
+> against ln 65 = 4.17; names 3.0–3.3 against ln 27 = 3.30), not above it;
+> (9) the copying game needed two changes to show its induction head within a few thousand steps: the matrices start
+> at PyTorch's 1/√fan-in scale instead of nanoGPT's 0.02 (tiny attention weights leave a tiny model on a long flat
+> start; this also helps Shakespeare, 2.05 against 2.15 nats after 600 steps) and the positions start as the original
+> Transformer's sinusoids; and “copyable” letters are only those whose first copy is inside the model's context.
+> Measured (32-letter context, batch 32): two layers drop from 2.31 to 0.74 nats between steps 2 000 and 3 000 and
+> level off near 0.6 (a letter that occurs twice in a run is ambiguous); one layer creeps down to 2.54 and stays; first
+> copies stay at 3.3 (ln 26 = 3.26) for both. The goal is below 1 nat;
+> (10) the count tables are counted in a Web Worker; the tokens panel learns 400 byte-pair merges on the text
+> (“strawberry” becomes st · ra · w · b · er · ry on Shakespeare); a map of the letter embeddings (their two main
+> directions) was added to the Predict view;
+> (11) the poster is the Count tables view (exact and reproducible: the browser's software GPU cannot train a
+> transformer in reasonable time); the live preview on the home page trains the default transformer;
+> (12) on a slow GPU the page budgets its computing against the measured time between frames and spreads an
+> evaluation over several frames, so it keeps responding.
+> The claims that need long training are tested on the GPU by `pnpm test:lm-slow` (about an hour on the software
+> renderer).
+
 The eighth simulation, proposed title **"How AI Writes"** (decision 1), as the sequel to *How AI Learns*. A language
 model trained live on the GPU, one letter at a time, from gibberish to recognisable Shakespeare (or invented names)
 in a minute or two. Same bar as the other seven: a 64-bit TypeScript twin of every shader, GPU-vs-twin tests,

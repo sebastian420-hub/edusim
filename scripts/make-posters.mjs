@@ -89,6 +89,18 @@ const POSTERS = [
     },
   },
   {
+    id: "language-model",
+    route: "/cs/language-model?view=tables&tk=4&layers=1&width=32&heads=2&ctx=16&batch=8",
+    focus: { x: 0.5, y: 0.5 },
+    async prepare(page) {
+      // Count tables writing from gibberish (letter frequencies) to almost-English (six letters of context):
+      // exact and reproducible, with no training needed. The live preview shows the transformer learning.
+      await page.getByRole("button", { name: "Pause", exact: true }).click();
+      await page.waitForFunction(() => /Best on unseen text/.test(document.body.innerText), null, { timeout: 120_000 });
+      await wait(2500);
+    },
+  },
+  {
     id: "cellular-automata",
     route: "/cs/cellular-automata",
     focus: { x: 0.5, y: 0.5 },
@@ -149,6 +161,7 @@ await withServer(
   async (base) => {
     const browser = await chromium.launch({
       channel: "chromium",
+      ...(process.env.E2E_CHROMIUM ? { executablePath: process.env.E2E_CHROMIUM } : {}),
       args: ["--no-sandbox", "--enable-unsafe-webgpu", "--ignore-gpu-blocklist", "--enable-features=Vulkan", "--use-vulkan=swiftshader", "--use-angle=swiftshader", "--use-webgpu-adapter=swiftshader"],
     });
     fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -182,6 +195,9 @@ await withServer(
     const context = await browser.newContext({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 1 });
     const page = await context.newPage();
     await page.goto(base + "/");
+    // Let React finish hydrating first, or it replaces the composed page with the home page again.
+    await page.waitForLoadState("networkidle");
+    await wait(2000);
     const dataUrls = POSTERS.map((p) => `data:image/webp;base64,${fs.readFileSync(path.join(OUT_DIR, `${p.id}.webp`)).toString("base64")}`);
     await page.evaluate((images) => {
       document.body.innerHTML = `
@@ -192,7 +208,7 @@ await withServer(
             <div style="margin-top:26px;font-size:18px;line-height:1.45;color:#939bab">Live models of waves, orbits, chaos, neurons, cellular life and machine learning, computed on your graphics card.</div>
             <div style="margin-top:34px;font:500 22px var(--font-geist-sans),sans-serif;letter-spacing:-.01em">EduSim</div>
           </div>
-          <div style="display:flex;gap:12px">${images.map((src) => `<img src="${src}" style="width:${images.length > 6 ? 88 : images.length > 5 ? 104 : images.length > 4 ? 128 : images.length > 3 ? 168 : 214}px;height:${images.length > 6 ? 97 : images.length > 5 ? 114 : images.length > 4 ? 141 : images.length > 3 ? 185 : 235}px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
+          <div style="display:flex;gap:12px">${images.map((src) => `<img src="${src}" style="width:${images.length > 7 ? 76 : images.length > 6 ? 88 : images.length > 5 ? 104 : images.length > 4 ? 128 : images.length > 3 ? 168 : 214}px;height:${images.length > 7 ? 84 : images.length > 6 ? 97 : images.length > 5 ? 114 : images.length > 4 ? 141 : images.length > 3 ? 185 : 235}px;object-fit:cover;border:1px solid rgba(255,255,255,.14);border-radius:3px;display:block">`).join("")}</div>
         </div>`;
       document.body.style.margin = "0";
     }, dataUrls);
